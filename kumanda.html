@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0c0a16">
+<title>Bomba Ustası kumanda</title>
+<style>
+  :root { --gece: #0c0a16; --metin: #e8e0cc; --soluk: #9a92ac; --sari: #f2c230; --renk: #9a92ac; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--gece); color: var(--metin); font: 15px monospace; overflow: hidden;
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+    padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .sayfa { height: 100%; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .durum { display: flex; align-items: center; gap: 8px; color: var(--soluk); }
+  .durum::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: #5b6478; flex: none; }
+  .durum.bagli { color: var(--metin); }
+  .durum.bagli::before { background: #3ad13a; box-shadow: 0 0 8px #3ad13a; }
+  .durum.hata { color: #ff9d85; } .durum.hata::before { background: #c4302a; }
+  .rozet { padding: 6px 12px; border: 3px solid var(--renk); color: var(--renk); font-size: 16px; letter-spacing: 0.06em; }
+  .rozet.yok { opacity: 0.4; }
+
+  .kol { display: grid; grid-template-columns: 1fr 1fr; align-items: center; justify-items: center; gap: 12px; min-height: 0; }
+  #yon { position: relative; width: min(44vw, 62vh, 260px); aspect-ratio: 1; touch-action: none; }
+  #yon::before, #yon::after { content: ''; position: absolute; background: #2a2648; border: 3px solid; border-color: #5a5090 #141024 #141024 #5a5090; }
+  #yon::before { left: 33%; right: 33%; top: 0; bottom: 0; }
+  #yon::after { top: 33%; bottom: 33%; left: 0; right: 0; }
+  #yon span { position: absolute; z-index: 1; font-size: 26px; color: #c8c0e0; transform: translate(-50%, -50%); pointer-events: none; }
+  #yon[data-yon="up"] .u, #yon[data-yon="down"] .d, #yon[data-yon="left"] .l, #yon[data-yon="right"] .r { color: var(--sari); }
+  #bomba { width: min(38vw, 56vh, 200px); aspect-ratio: 1; border-radius: 50%; font: 18px monospace; color: #fff; touch-action: none;
+    background: radial-gradient(circle at 35% 30%, #ec6450, #c4302a 55%, #7a1a14); border: 4px solid #4a0e0a; }
+  #bomba.basili { filter: brightness(0.82); transform: translateY(3px); }
+  .alt { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .alt button { font: inherit; color: var(--metin); background: #1c1834; border: 3px solid; border-color: #4a4078 #141024 #141024 #4a4078;
+    padding: 12px 6px; min-height: 48px; touch-action: manipulation; }
+  .alt button:active { border-color: #141024 #4a4078 #4a4078 #141024; }
+  .ipucu { grid-column: 1 / -1; text-align: center; color: var(--soluk); font-size: 13px; min-height: 1.3em; }
+
+  #giris { display: grid; align-content: center; gap: 14px; text-align: center; padding: 0 8px; grid-row: 2; }
+  #giris[hidden], #kumanda[hidden] { display: none; }
+  #giris h1 { margin: 0; font-size: 21px; font-weight: normal; color: var(--sari); }
+  #giris p { margin: 0; color: var(--soluk); line-height: 1.6; }
+  #kod { font: 30px monospace; letter-spacing: 0.25em; text-align: center; text-transform: uppercase; width: 100%; padding: 12px 8px;
+    background: #050410; color: var(--sari); border: 3px solid; border-color: #141024 #5a5090 #5a5090 #141024; }
+  #baglan { font: 18px monospace; padding: 12px; color: #1d1600; background: var(--sari); border: 3px solid; border-color: #fff27a #7a6800 #7a6800 #fff27a; }
+  #kumanda { display: contents; }
+  @media (orientation: portrait) {
+    .kol { grid-template-columns: 1fr; grid-template-rows: auto auto; }
+    #yon { width: min(70vw, 34vh, 280px); }
+    #bomba { width: min(46vw, 22vh, 200px); justify-self: end; }
+  }
+</style>
+</head>
+<body>
+<div class="sayfa">
+  <header>
+    <div class="durum" id="durum" role="status">Bağlanıyor…</div>
+    <div class="rozet yok" id="rozet">—</div>
+  </header>
+
+  <form id="giris" hidden>
+    <h1>Telefonu kumanda yap</h1>
+    <p>Bilgisayarda ya da TV'de Bomba Ustası'nı aç, <b>Telefonla oyna</b>'ya bas (K). QR kodu okut ya da 6 karakterlik kodu yaz.</p>
+    <input id="kod" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Bağlantı kodu" placeholder="······">
+    <button id="baglan" type="submit">Bağlan</button>
+  </form>
+
+  <div id="kumanda" hidden>
+    <div class="kol">
+      <div id="yon" role="group" aria-label="Yön tuşları">
+        <span class="u" style="left:50%;top:16%">▲</span><span class="d" style="left:50%;top:84%">▼</span>
+        <span class="l" style="left:16%;top:50%">◀</span><span class="r" style="left:84%;top:50%">▶</span>
+      </div>
+      <button id="bomba" type="button">DİNAMİT</button>
+    </div>
+    <div class="alt">
+      <div class="ipucu" id="ipucu"></div>
+      <button id="duraklat" type="button">Duraklat</button>
+      <button id="menu" type="button">Geri / Menü</button>
+    </div>
+  </div>
+</div>
+
+<script src="src/vendor/peerjs.min.js"></script>
+<script>
+// Bomba Ustası — telefon kumandası. Ekran tarafı ve mesaj biçimi: src/remote.js
+(function () {
+  'use strict';
+  const PREFIX = 'bombaustasi-';
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $('durum'), badge = $('rozet'), hint = $('ipucu'), pad = $('yon'), bombBtn = $('bomba');
+  const params = new URLSearchParams(location.search);
+  function peerOptions() {
+    const p = params.get('peer');
+    if (!p) return { debug: 0 };
+    const [host, port] = p.split(':');
+    const local = /^(localhost|127\.|192\.168\.|10\.)/.test(host);
+    return { debug: 1, host, port: +port || (local ? 9000 : 443), path: '/', secure: !local };
+  }
+  const setStatus = (t, k) => { statusEl.textContent = t; statusEl.className = 'durum' + (k ? ' ' + k : ''); };
+  const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch { /* yok say */ } };
+
+  // ---------- kod ----------
+  const clean = (s) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  let code = clean(decodeURIComponent(location.hash.slice(1)));
+  $('giris').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const c = clean($('kod').value);
+    if (c.length !== 6) { setStatus('Kod 6 karakter olmalı.', 'hata'); return; }
+    code = c; history.replaceState(null, '', '#' + code); begin();
+  });
+  $('kod').addEventListener('input', (e) => { e.target.value = clean(e.target.value); });
+
+  // ---------- bağlantı ----------
+  let peer = null, conn = null, retryTimer = null, openTimer = null;
+  function begin() {
+    $('giris').hidden = true; $('kumanda').hidden = false;
+    setStatus('Bağlanıyor…');
+    if (!peer || peer.destroyed) {
+      peer = new window.Peer(undefined, peerOptions());
+      peer.on('open', connect);
+      peer.on('disconnected', () => setTimeout(() => { if (!peer.destroyed && peer.disconnected) peer.reconnect(); }, 1500));
+      peer.on('error', (err) => {
+        if (err.type === 'peer-unavailable') { dropPending(); setStatus('Oyun bulunamadı. Oyunda kumanda paneli açık mı?', 'hata'); retry(3000); }
+        else if (err.type === 'browser-incompatible') setStatus('Bu tarayıcı WebRTC desteklemiyor.', 'hata');
+        else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(err.type)) { setStatus('Sunucuya ulaşılamadı. Tekrar deneniyor…', 'hata'); retry(4000); }
+      });
+    } else if (peer.open) connect();
+  }
+  function retry(ms) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => { if (!peer || peer.destroyed) { begin(); return; } if (peer.disconnected) { peer.reconnect(); return; } connect(); }, ms);
+  }
+  function dropPending() {
+    clearTimeout(openTimer);
+    const c = conn; if (!c || c.open) return;
+    conn = null; c._yeni = false; try { c.close(); } catch { /* yok say */ }
+  }
+  function connect() {
+    if (conn && (conn.open || conn._yeni)) return;
+    clearTimeout(retryTimer);
+    const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
+    c._yeni = true; conn = c;
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => { if (conn === c && !c.open) { dropPending(); retry(500); } }, 10000);
+    c.on('open', () => { c._yeni = false; clearTimeout(openTimer); setStatus('Bağlandı', 'bagli'); c.send({ t: 'h' }); sentDir = undefined; sendDir(); buzz(30); keepAwake(); });
+    c.on('data', onData);
+    c.on('close', () => { if (conn !== c) return; conn = null; setStatus('Bağlantı koptu, yeniden bağlanıyor…', 'hata'); retry(2000); });
+    c.on('error', () => { /* close ayrıca gelir */ });
+  }
+  const send = (m) => { if (conn && conn.open) conn.send(m); };
+  setInterval(() => send({ t: 'p' }), 1000); // nabız: oyun kopmayı böyle anlar
+  window.addEventListener('pagehide', () => { send({ t: 'bye' }); try { conn && conn.close(); } catch { /* yok say */ } });
+
+  // ---------- oyundan gelenler ----------
+  let state = null;
+  function onData(m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'v') { buzz(m.p || 60); return; }
+    if (m.t !== 's') return;
+    state = m;
+    badge.textContent = m.label;
+    badge.classList.toggle('yok', m.slot < 0);
+    document.documentElement.style.setProperty('--renk', m.color);
+    const menu = !m.playing;
+    hint.textContent = m.paused ? 'Duraklatıldı: ▲▼ ile seç, DİNAMİT ile onayla'
+      : menu ? (m.screen === 'lobby' ? 'Kapışma odası: ▲▼◀▶ ile ayarla, DİNAMİT ile başlat' : 'Menü: ▲▼ ile seç, DİNAMİT ile onayla')
+      : m.slot < 0 ? 'Yuvalar dolu; bu turu izliyorsun' : !m.alive ? 'Elendin. Tur bitince yeniden oynarsın' : '';
+    $('duraklat').textContent = m.paused ? 'Devam' : 'Duraklat';
+  }
+
+  // ---------- yön haçı ----------
+  let pid = null, dir = null, sentDir;
+  function sendDir() { if (dir !== sentDir) { sentDir = dir; send({ t: 'dir', d: dir }); } }
+  function setDir(e) {
+    const r = pad.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy) < r.width * 0.12 ? null : Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+    if (d !== dir) { dir = d; pad.dataset.yon = d || ''; if (d) buzz(8); sendDir(); }
+  }
+  pad.addEventListener('pointerdown', (e) => { e.preventDefault(); if (pid !== null) return; pid = e.pointerId; try { pad.setPointerCapture(pid); } catch { /* yok say */ } setDir(e); keepAwake(); });
+  pad.addEventListener('pointermove', (e) => { if (e.pointerId === pid) setDir(e); });
+  const release = (e) => { if (e.pointerId !== pid) return; pid = null; dir = null; pad.dataset.yon = ''; sendDir(); };
+  pad.addEventListener('pointerup', release); pad.addEventListener('pointercancel', release); pad.addEventListener('lostpointercapture', release);
+
+  // ---------- düğmeler ----------
+  bombBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); bombBtn.classList.add('basili'); send({ t: 'b', b: 'bomb' }); buzz(15); keepAwake(); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) bombBtn.addEventListener(ev, () => bombBtn.classList.remove('basili'));
+  $('duraklat').addEventListener('click', () => send({ t: 'b', b: 'pause' }));
+  $('menu').addEventListener('click', () => send({ t: 'b', b: 'menu' }));
+  window.addEventListener('blur', () => { if (dir) { dir = null; pad.dataset.yon = ''; sendDir(); } });
+
+  // ---------- ekran açık kalsın ----------
+  let wakeLock = null;
+  async function keepAwake() {
+    if (wakeLock || !('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+    try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch { /* yok say */ }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') { if (dir) { dir = null; pad.dataset.yon = ''; sendDir(); } return; }
+    keepAwake(); if (code && !(conn && conn.open)) retry(200);
+  });
+
+  if (!window.Peer) { setStatus('Kumanda dosyası yüklenemedi. Sayfayı yenile.', 'hata'); return; }
+  if (code.length === 6) begin(); else { $('giris').hidden = false; setStatus('Kod bekleniyor'); }
+})();
+</script>
+</body>
+</html>
