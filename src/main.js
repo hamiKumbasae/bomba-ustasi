@@ -17,13 +17,14 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* yok say */ } },
   };
-  // Ekran: 'vcd' (eskimiş VCD görüntüsü, varsayılan), 'crt' (tüplü TV), 'temiz'
-  const MODES = ['vcd', 'crt', 'temiz'];
-  let screenMode = store.get('bu-ekran-mod', 'vcd');
-  if (!MODES.includes(screenMode)) screenMode = 'vcd';
+  // Ekran: 'temiz' (düz web oyunu, varsayılan), 'crt' (tüplü TV), 'vcd' (eskimiş VCD)
+  const MODES = ['temiz', 'crt', 'vcd'];
+  const MODE_NO = { temiz: 0, crt: 1, vcd: 2 };
+  let screenMode = store.get('bu-ekran-v3', 'temiz');
+  if (!MODES.includes(screenMode)) screenMode = 'temiz';
   let muted = store.get('bu-ses', false);
 
-  // ---------- retro ekran (WebGL, iki geçiş) ----------
+  // ---------- ekran (WebGL, iki geçiş; isteğe bağlı eski TV / VCD efekti) ----------
   // 1. geçiş 256×240'ta: VCD'nin MPEG-1 görüntüsü gibi renk (chroma) yarım
   //    çözünürlükte ve sağa taşar, 8×8 bloklar titreşir, renkler bantlanır,
   //    soluk ve sararmış tonlar, sinyal yansıması (hayalet).
@@ -156,7 +157,7 @@ void main() {
 
   function present(t) {
     if (gl) {
-      const m = MODES.length - 1 - MODES.indexOf(screenMode); // vcd 2, crt 1, temiz 0
+      const m = MODE_NO[screenMode];
       const time = (t / 1000) % 97;
       const set = (P, w, h) => {
         gl.useProgram(P.pr);
@@ -270,7 +271,7 @@ void main() {
   const SLOT_TYPES = ['key1', 'key2', 'cpu', 'off'];
   const SLOT_LABEL = { key1: 'OKLAR', key2: 'WASD', cpu: 'BİLGİSAYAR', off: 'YOK', phone: 'TELEFON' };
   const app = {
-    screen: params.has('hemen') ? 'title' : 'boot', bootT: 0, menuIndex: 0, pauseIndex: 0, lobbyIndex: 0,
+    screen: 'title', menuIndex: 0, pauseIndex: 0, lobbyIndex: 0,
     slots: [{ type: 'key1' }, { type: 'cpu' }, { type: 'cpu' }, { type: 'off' }], map: 0,
     G: null, fx: [], shake: 0, seed: 1, deco: null,
   };
@@ -324,7 +325,6 @@ void main() {
     audio();
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (KEY_DIR[k] || BOMB_KEYS[k]) e.preventDefault();
-    if (app.screen === 'boot') { e.preventDefault(); toTitle(); return; }
     if (k === 'm') { muted = !muted; store.set('bu-ses', muted); showButtons(); return; }
     if (k === 'c') { cycleScreen(); return; }
     if (playing()) {
@@ -369,7 +369,6 @@ void main() {
   }
   function confirm() {
     audio();
-    if (app.screen === 'boot') { toTitle(); return; }
     if (app.screen === 'title') {
       const it = MENU_TITLE()[app.menuIndex];
       sfx.select();
@@ -739,29 +738,11 @@ void main() {
     text('ESC: GERİ', SW / 2, 222, '#6a6480', 8, 'center');
   }
 
-  // Açılış: eski VCD oynatıcılarının mavi ekranı.
-  function drawBoot(s) {
-    const k = app.bootT;
-    ctx.fillStyle = '#1a34a4'; ctx.fillRect(0, 0, SW, SH);
-    ctx.fillStyle = '#2a48c0'; for (let y = 0; y < SH; y += 4) ctx.fillRect(0, y, SW, 1);
-    // ▶ OYNAT
-    ctx.fillStyle = '#f0f0f0';
-    for (let i = 0; i < 7; i++) ctx.fillRect(14 + i, 14 + i / 2, 1, 8 - i);
-    text('OYNAT', 26, 14, '#f0f0f0', 8, 'left', '#0a1450');
-    text('VCD', SW - 14, 14, '#f0f0f0', 8, 'right', '#0a1450');
-    if (k > 0.4) text('VİDEO CD', SW / 2, 86, '#f0f0f0', 16, 'center', '#0a1450');
-    if (k > 1.0) text('BOMBA USTASI', SW / 2, 120, '#f2e070', 8, 'center', '#0a1450');
-    if (k > 1.0) text('DİSK 1', SW / 2, 136, '#c8d0f0', 8, 'center', '#0a1450');
-    const sec = Math.floor(k);
-    text('PARÇA 01   00:0' + Math.min(9, sec), 14, SH - 22, '#f0f0f0', 8, 'left', '#0a1450');
-  }
-
   function render(t) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#100e1c'; ctx.fillRect(0, 0, SW, SH);
     const s = t / 1000;
-    if (app.screen === 'boot') drawBoot(s);
-    else if (app.screen === 'title') drawTitle(s);
+    if (app.screen === 'title') drawTitle(s);
     else if (app.screen === 'help') drawHelp(s);
     else if (app.screen === 'lobby') drawLobby(s);
     else if (app.G) drawGame(s);
@@ -778,7 +759,6 @@ void main() {
       if (inGame() && app.G) { applyInputs(); BU.update(app.G, STEP); onEvents(); }
     }
     app.fx = app.fx.filter((f) => (f.t -= dt) > 0);
-    if (app.screen === 'boot') { app.bootT += dt; if (app.bootT > 2.6) toTitle(); }
     if (app.shake > 0) app.shake -= dt;
     render(t);
     present(t);
@@ -790,7 +770,7 @@ void main() {
   const $ = (id) => document.getElementById(id);
   function cycleScreen() {
     screenMode = MODES[(MODES.indexOf(screenMode) + 1) % MODES.length];
-    store.set('bu-ekran-mod', screenMode); showButtons();
+    store.set('bu-ekran-v3', screenMode); showButtons();
   }
   function showButtons() {
     if ($('ekran')) $('ekran').textContent = 'Ekran: ' + (gl ? { vcd: 'VCD', crt: 'Tüplü TV', temiz: 'Temiz' }[screenMode] : 'Temiz');

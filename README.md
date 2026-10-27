@@ -1,6 +1,6 @@
 # Bomba Ustası
 
-Beş şantiye dünyasında geçen, eski bir VCD oyunu görünümlü dinamit labirent oyunu. Tek başına 50 bölüm ve 5 patron boyunca ilerleyebilir ya da aynı ekranda 4 kişiye kadar kapışabilirsin. Telefonlar kumanda olarak kullanılabilir.
+Beş şantiye dünyasında geçen, piksel çizimli bir dinamit labirent oyunu. Tek başına 50 bölüm ve 5 patron boyunca ilerleyebilir ya da aynı ekranda 4 kişiye kadar kapışabilirsin. Telefonlar kumanda olarak kullanılabilir.
 
 **▶ Oyna:** https://hamikumbasae.github.io/bomba-ustasi/
 
@@ -21,7 +21,7 @@ Bu, türün klasiklerinden esinlenen ama adı, karakterleri, çizimleri, sesleri
 
 Patronlara yalnız dinamit patlaması işler. Pres ve Yıkım Robotu'nun sarsıntısından önce zemin kırmızı yanıp söner: oradan çekil.
 
-**Ekran:** Varsayılan görünüm eski bir **VCD** oyunu gibidir: soluk ve sararmış renkler, taşan renkler, titreyen bloklar, tarama çizgileri, kayan parazit bandı, bombeli tüp ekran. C tuşu ya da **Ekran** düğmesi **Tüplü TV** ve **Temiz** görünümlerine geçirir.
+**Ekran:** Oyun keskin piksellerle, düz bir web oyunu olarak açılır. İstersen C tuşu ya da **Ekran** düğmesiyle **Tüplü TV** (tarama çizgileri) ya da **VCD** (soluk, taşan renkler, parazit bandı, bombeli tüp) görünümüne geçebilirsin; seçim hatırlanır.
 
 **Ödüller:** +1 dinamit · +1 menzil · hız · kask (bir kez korur).
 
@@ -32,7 +32,7 @@ Patronlara yalnız dinamit patlaması işler. Pres ve Yıkım Robotu'nun sarsın
 | Yürü | Oklar (2. oyuncu WASD) | Yön haçı |
 | Dinamit / seç | Boşluk veya Enter (2. oyuncu F) | DİNAMİT |
 | Duraklat | P veya Esc | Duraklat |
-| Ekran (VCD / tüplü TV / temiz) | C | Ekran düğmesi |
+| Ekran (temiz / tüplü TV / VCD) | C | Ekran düğmesi |
 | Ses | M | Ses düğmesi |
 | Telefonu kumanda yap | K | Telefonla oyna |
 
@@ -49,7 +49,7 @@ Bağlantı WebRTC ile doğrudan kurulur; eşleştirmeyi [PeerJS](https://peerjs.
 - `src/levels.js` — 50 bölümün haritaları; `tools/bolumler.py` ile üretilir (desenler ve ayarlar betikte): `python3 tools/bolumler.py`
 - `src/core.js` — oyun kuralları (çizimden bağımsız): harita, hareket, dinamit ve alev, düşmanlar, patronlar, bilgisayar oyuncusu, bölüm ve tur akışı
 - `src/sprites.js` — piksel çizimler (16×16, kodla çizilir)
-- `src/main.js` — ekranlar, giriş, ses (Web Audio ile sentez), VCD / tüplü TV ekranı (iki geçişli WebGL)
+- `src/main.js` — ekranlar, giriş, ses (Web Audio ile sentez), ekran çizimi ve isteğe bağlı tüplü TV / VCD efekti (iki geçişli WebGL)
 - `src/remote.js`, `kumanda.html` — telefon kumandaları
 - `src/vendor/` — PeerJS ve QR kod kütüphaneleri (MIT), `src/fonts/` — Press Start 2P (SIL OFL 1.1)
 - `tests/core.test.js`, `tests/levels.test.js` — kural, harita ve patron testleri: `node tests/core.test.js && node tests/levels.test.js`
