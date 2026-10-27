@@ -39,7 +39,23 @@
     bocek:    { speed: 1.35, points: 100, turn: 0.15, chase: 0,    wallpass: false },
     toz:      { speed: 2.3,  points: 200, turn: 0.45, chase: 0,    wallpass: false },
     kostebek: { speed: 1.7,  points: 400, turn: 0.2,  chase: 0.65, wallpass: true },
+    yengec:   { speed: 2.0,  points: 200, turn: 0.08, chase: 0,    wallpass: false },
+    marti:    { speed: 1.9,  points: 400, turn: 0.35, chase: 0.25, wallpass: true },
+    yarasa:   { speed: 2.6,  points: 300, turn: 0.6,  chase: 0,    wallpass: false },
+    robot:    { speed: 1.6,  points: 500, turn: 0.15, chase: 0.8,  wallpass: false },
+    kivilcim: { speed: 3.0,  points: 500, turn: 0.3,  chase: 0.15, wallpass: false },
   };
+
+  // Patronlar: 2×2 karo; yalnız dinamit patlaması hasar verir.
+  const BOSS = {
+    kepce:  { hp: 5,  speed: 1.3,  chase: 0.35, charge: 5,   spawn: 0, minion: null,     drill: false, slam: 0,   horiz: false, points: 5000 },
+    yengec: { hp: 6,  speed: 2.0,  chase: 0,    charge: 0,   spawn: 7, minion: 'yengec', drill: false, slam: 0,   horiz: true,  points: 6000 },
+    matkap: { hp: 7,  speed: 1.15, chase: 0.9,  charge: 0,   spawn: 0, minion: null,     drill: true,  slam: 0,   horiz: false, points: 7000 },
+    pres:   { hp: 8,  speed: 1.0,  chase: 0.45, charge: 0,   spawn: 0, minion: null,     drill: false, slam: 4.5, horiz: false, points: 8000 },
+    robot:  { hp: 10, speed: 1.35, chase: 0.7,  charge: 7,   spawn: 9, minion: 'robot',  drill: false, slam: 6,   horiz: false, points: 10000 },
+  };
+  const BOSS_R = 0.95;        // patronun yarı genişliği (karo)
+  const BOSS_HIT = 1.25;      // oyuncuya değme mesafesi
 
   const idx = (x, y) => y * COLS + x;
   const inside = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS;
@@ -96,6 +112,10 @@
     G.bombs = []; G.enemies = [];
     G.door = -1; G.doorOpen = false;
     G.shrinkT = 0; G.shrinkI = 0; G.shrinkOrder = null;
+    G.wallKind = new Uint8Array(N); // 1 kenar/sütun, 2 dünyaya özgü ek engel
+    G.warnT = new Float32Array(N);  // patronun yer sarsıntısı uyarısı
+    G.boss = null;
+    for (let i = 0; i < N; i++) if (G.grid[i] === WALL) G.wallKind[i] = 1;
   }
 
   function hideItems(G, r, kinds, candidates) {
@@ -106,13 +126,65 @@
     }
   }
 
+  const LEVELS = () => root.BU_LEVELS || [];
+  const WORLDS = () => root.BU_WORLDS || [];
+
+  // keep: 'all' (bölüm geçildi), 'some' (öldü: dinamit ve menzil kalır), false
+  function carry(G, fresh, keep) {
+    const p = G.players[0];
+    if (!p || !keep) return;
+    fresh.bombs = p.bombs; fresh.fire = p.fire;
+    if (keep === 'all' || keep === true) { fresh.speedUps = p.speedUps; fresh.helmet = p.helmet; }
+  }
+
+  function loadMap(G, lv) {
+    emptyLevel(G);
+    G.world = lv.world; G.stageName = lv.name; G.bossKind = lv.boss;
+    const kinds = (WORLDS()[lv.world - 1] || { enemies: ['bocek', 'toz', 'kostebek'] }).enemies;
+    const r = mulberry32(lv.stage * 131 + 7);
+    let start = [1, 1], bossAt = null;
+    const enemies = [];
+    lv.map.forEach((row, y) => {
+      for (let x = 0; x < COLS; x++) {
+        const ch = row[x], i = idx(x, y);
+        G.grid[i] = FLOOR; G.wallKind[i] = 0;
+        if (ch === '#') { G.grid[i] = WALL; G.wallKind[i] = 1; }
+        else if (ch === 'X') { G.grid[i] = WALL; G.wallKind[i] = 2; }
+        else if (ch === 'c') G.grid[i] = CRATE;
+        else if (ch === 'D') { G.grid[i] = CRATE; G.door = i; }
+        else if ('BFSH'.includes(ch)) { G.grid[i] = CRATE; G.itemAt[i] = 'BFSH'.indexOf(ch); }
+        else if (ch === 'P') start = [x, y];
+        else if (ch === 'Z') bossAt = [x + 0.5, y + 0.5];
+        else if (ch >= '1' && ch <= '3') enemies.push([kinds[+ch - 1], x, y]);
+      }
+    });
+    for (const [k, x, y] of enemies) G.enemies.push(newEnemy(k, x, y, r));
+    if (bossAt && lv.boss) {
+      const B = BOSS[lv.boss];
+      G.boss = { kind: lv.boss, x: bossAt[0], y: bossAt[1], dx: 0, dy: 1, hp: B.hp, maxHp: B.hp, inv: 0, alive: true, dying: 0, anim: 0,
+        chargeT: B.charge, charging: 0, spawnT: B.spawn ? B.spawn * 0.6 : 0, slamT: B.slam, turnT: 1, boomT: 0, gone: false };
+    }
+    return start;
+  }
+
   function setupStory(G, stage, keep) {
+    const lv = LEVELS()[stage - 1];
+    if (lv) {
+      const start = loadMap(G, lv);
+      G.mode = 'story'; G.stage = stage;
+      const fresh = newPlayer(0, start[0], start[1]);
+      carry(G, fresh, keep);
+      G.players = [fresh];
+      G.phase = 'intro'; G.phaseT = lv.boss ? 2.4 : 2.0;
+      G.rand = mulberry32(stage * 104729 + 7);
+      return;
+    }
+    // Harita dosyası yoksa (ör. eski testler) rastgele bölüm üret.
     const r = mulberry32(stage * 7919 + 13);
     emptyLevel(G);
-    G.mode = 'story'; G.stage = stage;
-    const p = G.players[0] || newPlayer(0, 1, 1);
+    G.mode = 'story'; G.stage = stage; G.world = 1; G.stageName = ''; G.bossKind = null;
     const fresh = newPlayer(0, 1, 1);
-    if (keep) for (const k of ['bombs', 'fire', 'speedUps', 'helmet']) fresh[k] = p[k];
+    carry(G, fresh, keep);
     G.players = [fresh];
     const P = storyParams(stage), clear = new Set();
     clearAround(clear, 1, 1); clear.add(idx(1, 3)); clear.add(idx(3, 1));
@@ -148,10 +220,10 @@
   }
 
   // slots: [{cpu:bool} | null] × 4 — null kapalı.
-  function setupBattle(G, slots, round, seed) {
+  function setupBattle(G, slots, round, seed, world) {
     const r = mulberry32((seed || 1) * 31337 + round * 977);
     emptyLevel(G);
-    G.mode = 'battle'; G.round = round;
+    G.mode = 'battle'; G.round = round; G.world = world || 1;
     const prev = G.players || [];
     G.players = [];
     const clear = new Set();
@@ -294,6 +366,7 @@
     const owner = G.players.find((p) => p.id === b.owner);
     if (owner) owner.bombsOut = Math.max(0, owner.bombsOut - 1);
     let core = CORE;
+    const hit = [idx(b.x, b.y)];
     for (const d of DIR_LIST) {
       const [dx, dy] = DIRS[d];
       let px = b.x, py = b.y;
@@ -304,6 +377,7 @@
         if (t === WALL) break;
         // Bu yöne uzanabiliyoruz: önceki karo bu yöne, bu karo geri yöne bağlanır.
         if (k === 1) core |= ARM[d]; else G.flameMask[idx(px, py)] |= ARM[d];
+        hit.push(i);
         if (t === CRATE) {
           addFlame(G, i, ARM[OPP[d]]);
           if (G.crumble[i] <= 0) { G.crumble[i] = RULES.crumbleTime; G.events.push({ type: 'crate', x, y }); }
@@ -318,6 +392,7 @@
     }
     addFlame(G, idx(b.x, b.y), core);
     G.events.push({ type: 'boom', x: b.x, y: b.y });
+    bossBlast(G, hit);
   }
 
   function updateBombs(G, dt) {
@@ -345,6 +420,11 @@
           if (G.itemAt[i] >= 0) G.revealed[i] = 1;
           if (i === G.door) { G.doorShown = true; G.events.push({ type: 'door' }); }
         }
+      }
+      // Patronun yer sarsıntısı: uyarı süresi bitince işaretli karolar alev alır.
+      if (G.warnT[i] > 0) {
+        G.warnT[i] -= dt;
+        if (G.warnT[i] <= 0) { G.warnT[i] = 0; if (G.grid[i] === FLOOR) addFlame(G, i, CORE); }
       }
     }
   }
@@ -375,6 +455,122 @@
         if (p.alive && Math.abs(p.x - e.x) < RULES.hitBox && Math.abs(p.y - e.y) < RULES.hitBox) hurtPlayer(G, p, 'enemy');
       }
     }
+    const B = G.boss;
+    if (B && B.alive) for (const p of G.players) {
+      if (p.alive && Math.abs(p.x - B.x) < BOSS_HIT && Math.abs(p.y - B.y) < BOSS_HIT) hurtPlayer(G, p, 'boss');
+    }
+  }
+
+  // ---------- patron ----------
+  const overlaps = (B, x, y, r = BOSS_R) => Math.abs(x - B.x) < 0.5 + r && Math.abs(y - B.y) < 0.5 + r;
+  function bossTiles(B, cx, cy) {
+    const out = [];
+    for (let y = Math.floor(cy - BOSS_R - 0.5) + 1; y <= Math.ceil(cy + BOSS_R + 0.5) - 1; y++) {
+      for (let x = Math.floor(cx - BOSS_R - 0.5) + 1; x <= Math.ceil(cx + BOSS_R + 0.5) - 1; x++) {
+        if (inside(x, y) && Math.abs(x - cx) < 0.5 + BOSS_R && Math.abs(y - cy) < 0.5 + BOSS_R) out.push([x, y]);
+      }
+    }
+    return out;
+  }
+  function bossBlocked(G, B, cx, cy) {
+    const P = BOSS[B.kind];
+    let blocked = false;
+    for (const [x, y] of bossTiles(B, cx, cy)) {
+      const i = idx(x, y), t = G.grid[i];
+      if (t === WALL) blocked = true;
+      else if (t === CRATE) {
+        blocked = true;
+        if (P.drill && G.crumble[i] <= 0) { G.crumble[i] = RULES.crumbleTime; G.events.push({ type: 'crate', x, y }); }
+      } else if (bombAt(G, x, y)) blocked = true;
+    }
+    return blocked;
+  }
+  function bossBlast(G, tiles) {
+    const B = G.boss;
+    if (!B || !B.alive || B.inv > 0) return;
+    if (!tiles.some((i) => overlaps(B, i % COLS, Math.floor(i / COLS)))) return;
+    B.hp--; B.inv = 1.0;
+    G.events.push({ type: 'bossHit', hp: B.hp });
+    if (B.hp <= 0) {
+      B.alive = false; B.dying = 1.8; G.score += BOSS[B.kind].points;
+      G.events.push({ type: 'bossDown', kind: B.kind });
+    }
+  }
+  function bossSlam(G, B) {
+    const rows = [Math.floor(B.y), Math.ceil(B.y)], cols = [Math.floor(B.x), Math.ceil(B.x)];
+    const mark = (x, y) => { const i = idx(x, y); if (G.grid[i] === FLOOR) G.warnT[i] = 0.9; };
+    for (const y of rows) for (const s of [-1, 1]) {
+      for (let k = 0; k < 6; k++) { const x = (s < 0 ? cols[0] : cols[1]) + s * (k + 1); if (!inside(x, y) || G.grid[idx(x, y)] === WALL) break; mark(x, y); }
+    }
+    for (const x of cols) for (const s of [-1, 1]) {
+      for (let k = 0; k < 6; k++) { const y = (s < 0 ? rows[0] : rows[1]) + s * (k + 1); if (!inside(x, y) || G.grid[idx(x, y)] === WALL) break; mark(x, y); }
+    }
+    G.events.push({ type: 'slam' });
+  }
+  function spawnMinion(G, B, kind) {
+    if (G.enemies.filter((e) => e.alive).length >= 3) return;
+    // Patronun yanındaki boş bir karo
+    const cand = [];
+    for (let y = Math.floor(B.y) - 2; y <= Math.ceil(B.y) + 2; y++) for (let x = Math.floor(B.x) - 2; x <= Math.ceil(B.x) + 2; x++) {
+      if (inside(x, y) && G.grid[idx(x, y)] === FLOOR && !overlaps(B, x, y) && !bombAt(G, x, y)) cand.push([x, y]);
+    }
+    if (!cand.length) return;
+    const [x, y] = cand[Math.floor(G.rand() * cand.length)];
+    G.enemies.push(newEnemy(kind, x, y, G.rand));
+    G.events.push({ type: 'spawn', x, y });
+  }
+  function updateBoss(G, dt) {
+    const B = G.boss;
+    if (!B) return;
+    B.anim += dt;
+    if (!B.alive) {
+      if (B.gone) return;
+      B.dying -= dt; B.boomT -= dt;
+      if (B.boomT <= 0) { B.boomT = 0.22; G.events.push({ type: 'boom', x: B.x, y: B.y }); }
+      if (B.dying <= 0) {
+        B.gone = true;
+        for (const e of G.enemies) if (e.alive) { e.alive = false; e.dying = 0.9; }
+        G.door = idx(7, 6); G.grid[G.door] = FLOOR; G.crumble[G.door] = 0;
+        G.events.push({ type: 'door' });
+      }
+      return;
+    }
+    if (G.phase !== 'play') return;
+    if (B.inv > 0) B.inv -= dt;
+    const P = BOSS[B.kind], r = G.rand;
+    const target = nearestPlayer(G, B);
+    if (P.charge) {
+      B.chargeT -= dt;
+      if (B.chargeT <= 0 && target) {
+        B.chargeT = P.charge; B.charging = 0.9;
+        const dx = target.x - B.x, dy = target.y - B.y, l = Math.hypot(dx, dy) || 1;
+        B.dx = dx / l; B.dy = dy / l;
+        G.events.push({ type: 'bossCharge' });
+      }
+    }
+    if (P.spawn) { B.spawnT -= dt; if (B.spawnT <= 0) { B.spawnT = P.spawn; spawnMinion(G, B, P.minion); } }
+    if (P.slam) { B.slamT -= dt; if (B.slamT <= 0) { B.slamT = P.slam; bossSlam(G, B); } }
+    let speed = P.speed;
+    if (B.charging > 0) { B.charging -= dt; speed *= 3; }
+    else {
+      B.turnT -= dt;
+      if (B.turnT <= 0) {
+        B.turnT = 1.2 + r() * 1.4;
+        if (target && r() < P.chase) {
+          const dx = target.x - B.x, dy = target.y - B.y, l = Math.hypot(dx, dy) || 1;
+          B.dx = dx / l; B.dy = dy / l;
+        } else {
+          const a = r() * Math.PI * 2;
+          B.dx = Math.cos(a); B.dy = P.horiz ? Math.sin(a) * 0.25 : Math.sin(a);
+          const l = Math.hypot(B.dx, B.dy) || 1; B.dx /= l; B.dy /= l;
+        }
+      }
+    }
+    // Eksen eksen ilerle; engele çarpınca o eksende geri sek.
+    const nx = B.x + B.dx * speed * dt;
+    if (bossBlocked(G, B, nx, B.y)) { B.dx = -B.dx; if (B.charging > 0) B.charging = 0; } else B.x = nx;
+    const ny = B.y + B.dy * speed * dt;
+    if (bossBlocked(G, B, B.x, ny)) { B.dy = -B.dy; if (B.charging > 0) B.charging = 0; } else B.y = ny;
   }
 
   function pickUp(G, p) {
@@ -587,7 +783,7 @@
       if (G.phaseT <= 0) G.phase = 'play';
       return;
     }
-    if (G.phase === 'over' || G.phase === 'matchEnd') return;
+    if (G.phase === 'over' || G.phase === 'matchEnd' || G.phase === 'end') return;
 
     for (const p of G.players) {
       if (p.alive) {
@@ -607,6 +803,7 @@
       if (e.alive && G.phase === 'play') moveEnemy(G, e, dt);
       else if (!e.alive && e.dying > 0) e.dying -= dt;
     }
+    updateBoss(G, dt);
     if (G.phase === 'play') { checkHits(G); updateShrink(G, dt); }
 
     if (G.mode === 'story') storyFlow(G, dt); else battleFlow(G, dt);
@@ -614,13 +811,14 @@
 
   function storyFlow(G, dt) {
     const p = G.players[0];
-    const enemiesLeft = G.enemies.some((e) => e.alive);
-    if (!enemiesLeft && !G.doorOpen) { G.doorOpen = true; G.events.push({ type: 'doorOpen' }); }
+    const enemiesLeft = G.enemies.some((e) => e.alive) || (G.boss && !G.boss.gone);
+    if (!enemiesLeft && !G.doorOpen && G.door >= 0) { G.doorOpen = true; G.events.push({ type: 'doorOpen' }); }
     if (G.phase === 'play') {
       if (p.alive && G.doorOpen && G.door >= 0 && G.grid[G.door] === FLOOR && idx(...tileOf(p)) === G.door &&
           Math.abs(p.x - Math.round(p.x)) < 0.3 && Math.abs(p.y - Math.round(p.y)) < 0.3) {
-        G.phase = 'clear'; G.phaseT = RULES.stageClearTime; G.score += 1000;
-        G.events.push({ type: 'clear', stage: G.stage });
+        G.phase = 'clear'; G.phaseT = RULES.stageClearTime + (G.boss ? 1.2 : 0); G.score += 1000;
+        if (G.boss) G.lives++; // patron yenilince +1 can
+        G.events.push({ type: 'clear', stage: G.stage, boss: !!G.boss });
       } else if (!p.alive) {
         G.phase = 'dead'; G.phaseT = RULES.deathTime + 0.9;
       }
@@ -628,11 +826,14 @@
     }
     G.phaseT -= dt;
     if (G.phaseT > 0) return;
-    if (G.phase === 'clear') { setupStory(G, G.stage + 1, true); G.events.push({ type: 'stage', stage: G.stage }); }
-    else if (G.phase === 'dead') {
+    if (G.phase === 'clear') {
+      const total = LEVELS().length;
+      if (total && G.stage >= total) { G.phase = 'end'; G.events.push({ type: 'end' }); return; }
+      setupStory(G, G.stage + 1, 'all'); G.events.push({ type: 'stage', stage: G.stage });
+    } else if (G.phase === 'dead') {
       G.lives--;
       if (G.lives < 0) { G.phase = 'over'; G.events.push({ type: 'over' }); }
-      else { setupStory(G, G.stage, false); G.events.push({ type: 'stage', stage: G.stage }); }
+      else { setupStory(G, G.stage, 'some'); G.events.push({ type: 'stage', stage: G.stage }); }
     }
   }
 
@@ -657,7 +858,7 @@
   }
 
   const api = {
-    COLS, ROWS, N, FLOOR, WALL, CRATE, DIRS, DIR_LIST, ARM, CORE, ITEMS, RULES, ENEMY, CORNERS,
+    COLS, ROWS, N, FLOOR, WALL, CRATE, DIRS, DIR_LIST, ARM, CORE, ITEMS, RULES, ENEMY, CORNERS, BOSS, BOSS_R, LEVELS, WORLDS,
     idx, create, setupStory, setupBattle, storyParams, update, placeBomb, explode, dangerMap, blastTiles,
     bfs, aiThink, movePlayer, playerCanEnter, spiralOrder, mulberry32, speedOf,
   };

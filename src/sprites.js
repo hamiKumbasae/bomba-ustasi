@@ -117,52 +117,160 @@
     });
   }
 
-  // ---------- zemin ve duvarlar: şantiye ----------
-  function floor(variant) {
-    return memo('floor' + variant, () => mk(T, T, ({ rect, px }) => {
-      rect(0, 0, T, T, variant ? '#4a4f5c' : '#474c58');
-      // beton lekeleri (sabit)
-      let s = 7 + variant * 31;
-      for (let k = 0; k < 14; k++) { s = (s * 1103515245 + 12345) & 0x7fffffff; px(s % 15, (s >> 8) % 15, k % 3 ? '#525866' : '#3e434e'); }
-      rect(0, 15, T, 1, '#353943'); rect(15, 0, 1, T, '#353943');
-      rect(0, 0, T, 1, '#565c6a');
+  // ---------- dünyalar: zemin, sütun, ek engel, kenar, kırılabilir ----------
+  // 1 İnşaat · 2 Liman · 3 Maden · 4 Fabrika · 5 Gökdelen
+  function speckle(px, seed, n, cols) {
+    let s = seed;
+    for (let k = 0; k < n; k++) { s = (s * 1103515245 + 12345) & 0x7fffffff; px(s % 15, (s >> 8) % 15, cols[k % cols.length]); }
+  }
+  function floor(variant, w = 1) {
+    return memo(`floor${w}_${variant}`, () => mk(T, T, ({ rect, px }) => {
+      if (w === 2) {          // rıhtım tahtası
+        rect(0, 0, T, T, variant ? '#6e5c46' : '#685742');
+        for (const y of [3, 7, 11, 15]) rect(0, y, T, 1, '#463a2c');
+        for (const [x, y] of [[3, 1], [12, 5], [6, 9], [10, 13]]) px(x, y, '#9a8a70');
+        speckle(px, 9 + variant * 13, 6, ['#5a4a38', '#7a684e']);
+      } else if (w === 3) {   // toprak
+        rect(0, 0, T, T, variant ? '#3e3126' : '#3a2e24');
+        speckle(px, 5 + variant * 17, 18, ['#4c3c2e', '#2a2018', '#56463a']);
+        rect(0, 15, T, 1, '#2a2018');
+      } else if (w === 4) {   // metal ızgara
+        rect(0, 0, T, T, '#3c4246');
+        for (let k = 1; k < T; k += 4) { rect(k, 0, 1, T, '#2c3034'); rect(0, k, T, 1, '#2c3034'); }
+        for (let k = 0; k < T; k += 4) px(k, k, '#5a6266');
+        rect(0, 0, T, 1, '#4e565a');
+        if (variant) rect(0, 15, T, 1, '#30353a');
+      } else if (w === 5) {   // çatı betonu, gece
+        rect(0, 0, T, T, variant ? '#363a4c' : '#33374a');
+        speckle(px, 3 + variant * 7, 10, ['#3e4256', '#2c3040']);
+        rect(0, 15, T, 1, '#262a38'); rect(15, 0, 1, T, '#262a38');
+      } else {                // beton
+        rect(0, 0, T, T, variant ? '#4a4f5c' : '#474c58');
+        speckle(px, 7 + variant * 31, 14, ['#3e434e', '#525866', '#525866']);
+        rect(0, 15, T, 1, '#353943'); rect(15, 0, 1, T, '#353943');
+        rect(0, 0, T, 1, '#565c6a');
+      }
     }));
   }
   // Duvar karosunun hemen altındaki zemin gölgeli.
   function floorShadow() {
     return memo('floorS', () => mk(T, T, ({ rect }) => { rect(0, 0, T, 4, 'rgba(10,8,20,.45)'); }));
   }
-  function pillar() {
-    return memo('pillar', () => mk(T, T, ({ rect, px }) => {
-      rect(0, 0, T, T, '#8e8f98');
-      rect(0, 0, T, 2, '#c4c5cc'); rect(0, 0, 2, T, '#b0b1b8');
-      rect(0, 14, T, 2, '#55565f'); rect(14, 0, 2, T, '#62636c');
-      for (const [x, y] of [[4, 4], [11, 4], [4, 11], [11, 11]]) { px(x, y, '#5a5b64'); px(x + 1, y + 1, '#b8b9c0'); }
-      px(7, 7, '#74757e'); px(8, 8, '#74757e'); px(9, 8, '#74757e');
+  function bevel(rect, base, hi, lo) {
+    rect(0, 0, T, T, base); rect(0, 0, T, 2, hi); rect(0, 0, 2, T, hi); rect(0, 14, T, 2, lo); rect(14, 0, 2, T, lo);
+  }
+  function pillar(w = 1) {
+    return memo('pillar' + w, () => mk(T, T, ({ rect, px, disc }) => {
+      if (w === 2) {          // rıhtım babası
+        bevel(rect, '#7c8288', '#a8aeb4', '#4c5258');
+        disc(8, 8.5, 4.5, '#1e2228'); disc(8, 8, 3.5, '#2e343c'); px(6, 6, '#6a727c'); px(7, 6, '#6a727c');
+      } else if (w === 3) {   // katmanlı taş blok
+        bevel(rect, '#626872', '#8e949e', '#373b44');
+        for (const y of [5, 10]) rect(2, y, 12, 1, '#4a4f58');
+        px(0, 0, '#2a221c'); px(15, 0, '#2a221c'); px(0, 15, '#2a221c'); px(15, 15, '#2a221c');
+        px(5, 3, '#a8aeb8'); px(10, 8, '#a8aeb8'); px(6, 12, '#3a3e46'); px(7, 12, '#3a3e46');
+      } else if (w === 4) {   // makine bloğu
+        bevel(rect, '#46666a', '#6e9094', '#2a3e42');
+        rect(4, 4, 8, 6, '#24343a'); rect(5, 5, 6, 4, '#1a4a3a'); px(6, 6, '#5ae07a'); px(9, 7, '#e0c040');
+        for (const [x, y] of [[3, 12], [12, 12]]) px(x, y, '#a8c0c4');
+      } else if (w === 5) {   // kırmızı çelik kiriş
+        rect(0, 0, T, T, '#8a2e22');
+        rect(0, 0, T, 3, '#b8483a'); rect(0, 13, T, 3, '#5a1a12'); rect(6, 3, 4, 10, '#a03a2c'); rect(6, 3, 1, 10, '#c45a48');
+        for (const x of [2, 5, 10, 13]) { px(x, 1, '#e08070'); px(x, 14, '#2e0e08'); }
+      } else {                // beton sütun
+        bevel(rect, '#8e8f98', '#c4c5cc', '#55565f');
+        for (const [x, y] of [[4, 4], [11, 4], [4, 11], [11, 11]]) { px(x, y, '#5a5b64'); px(x + 1, y + 1, '#b8b9c0'); }
+        px(7, 7, '#74757e'); px(8, 8, '#74757e'); px(9, 8, '#74757e');
+      }
     }));
   }
-  // Dış sınır: sarı-siyah şantiye şeridi.
-  function border() {
-    return memo('border', () => mk(T, T, ({ px, rect }) => {
-      for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) px(x, y, ((x + y) >> 2) & 1 ? '#d8a82a' : '#2a2830');
-      rect(0, 0, T, 1, '#f0d070'); rect(0, 15, T, 1, '#141218');
+  // Dünyaya özgü ek engel (haritada X).
+  function extra(w = 1, v = 0) {
+    return memo(`extra${w}_${v % 3}`, () => mk(T, T, ({ rect, px, disc }) => {
+      if (w === 2) {          // konteyner
+        const c = [['#a8382c', '#d0584a', '#6e1e16'], ['#2e5a9a', '#4e7aba', '#1a3a6a'], ['#3a7a44', '#5a9a62', '#1e4a28']][v % 3];
+        rect(0, 0, T, T, c[0]);
+        for (let x = 1; x < T; x += 3) rect(x, 1, 1, 14, c[2]);
+        rect(0, 0, T, 1, c[1]); rect(0, 15, T, 1, c[2]); rect(12, 6, 2, 4, '#d8d0c0');
+      } else if (w === 3) {   // destek direği
+        rect(0, 0, T, T, '#2a1e14');
+        rect(2, 0, 4, T, '#7a5430'); rect(10, 0, 4, T, '#7a5430'); rect(2, 0, 1, T, '#9a7048'); rect(10, 0, 1, T, '#9a7048');
+        rect(0, 2, T, 3, '#6a4828'); rect(0, 2, T, 1, '#8a6440');
+        for (let k = 0; k < 10; k++) px(3 + k, 6 + k > 15 ? 15 : 6 + k, '#5a3c20');
+      } else if (w === 4) {   // tehlike şeritli çelik kasa
+        bevel(rect, '#6a6e72', '#94989c', '#3e4246');
+        for (let x = 0; x < T; x++) for (let y = 2; y < 6; y++) if (((x + y) >> 1) & 1) px(x, y, '#d8b028'); else px(x, y, '#222428');
+        rect(5, 9, 6, 3, '#4a4e52');
+      } else if (w === 5) {   // klima ünitesi
+        bevel(rect, '#8a909c', '#b4bac4', '#545a64');
+        disc(8, 8.5, 5, '#3a3e46'); disc(8, 8.5, 1.5, '#8a909c');
+        for (let k = -4; k <= 4; k += 2) rect(8 + k, 8, 1, 1, '#5a5e66');
+      } else {                // beton bariyer, kırmızı-beyaz şeritli
+        bevel(rect, '#9a9ca4', '#c8cad0', '#5e6068');
+        for (let x = 0; x < T; x++) for (let y = 6; y < 10; y++) px(x, y, ((x + y) >> 2) & 1 ? '#d23a2a' : '#ece8e0');
+        rect(0, 6, T, 1, '#6e7078'); rect(0, 9, T, 1, '#6e7078');
+      }
+    }));
+  }
+  function border(w = 1, v = 0) {
+    return memo(`border${w}_${v % 4}`, () => mk(T, T, ({ px, rect }) => {
+      if (w === 2) {          // deniz
+        rect(0, 0, T, T, '#1c3656');
+        const o = (v % 4) * 4;
+        for (let x = 0; x < T; x++) { px(x, (3 + ((x + o) >> 2) % 2), '#3a6a9a'); px(x, 10 + ((x + o + 2) >> 2) % 2, '#2e5a86'); }
+        px((5 + o) % 16, 7, '#9ac8e8');
+      } else if (w === 3) {   // ahşap iksa
+        rect(0, 0, T, T, '#24180e');
+        rect(0, 1, T, 5, '#6a4626'); rect(0, 9, T, 5, '#5e3e20'); rect(0, 1, T, 1, '#8a6038'); rect(0, 9, T, 1, '#7a5430');
+        px(3 + (v % 4) * 3, 3, '#3a2a18'); px(9, 11, '#3a2a18');
+      } else if (w === 4) {   // borular
+        rect(0, 0, T, T, '#1e2226');
+        rect(0, 2, T, 5, '#8a6a4a'); rect(0, 2, T, 1, '#b48c64'); rect(0, 6, T, 1, '#5a4430');
+        rect(0, 9, T, 5, '#6a7076'); rect(0, 9, T, 1, '#9aa0a6'); rect(0, 13, T, 1, '#40464c');
+        if (v % 2) { rect(6, 1, 3, 7, '#5a4430'); rect(10, 8, 3, 7, '#40464c'); }
+      } else if (w === 5) {   // gece şehir
+        rect(0, 0, T, T, '#10142a');
+        let s = 11 + v * 7;
+        for (let k = 0; k < 5; k++) { s = (s * 1103515245 + 12345) & 0x7fffffff; px(s % 16, (s >> 8) % 16, k % 2 ? '#e8d070' : '#8a90c0'); }
+      } else {                // şantiye şeridi
+        for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) px(x, y, ((x + y) >> 2) & 1 ? '#d8a82a' : '#2a2830');
+        rect(0, 0, T, 1, '#f0d070'); rect(0, 15, T, 1, '#141218');
+      }
     }));
   }
 
-  // ---------- tahta sandık ----------
-  function crate(stage = 0) {
-    return memo('crate' + stage, () => mk(T, T, ({ rect, px }) => {
-      const wood = ['#b4722c', '#8a5420', '#5a3612'][stage], dark = ['#6e4216', '#4e2e10', '#2e1a08'][stage];
-      rect(0, 0, T, T, dark);
-      rect(1, 1, 14, 14, wood);
-      rect(1, 1, 14, 1, ['#d8964a', '#a86a2c', '#6a4420'][stage]);
-      rect(1, 5, 14, 1, dark); rect(1, 10, 14, 1, dark);
-      // çapraz destek
-      for (let k = 0; k < 12; k++) { px(2 + k, 13 - k, dark); px(3 + k, 13 - k, dark); }
-      for (const [x, y] of [[2, 2], [13, 2], [2, 13], [13, 13]]) px(x, y, '#e8d8b0');
-      if (stage > 0) { // çatlaklar
-        px(6, 3, '#1a0e04'); px(7, 4, '#1a0e04'); px(10, 7, '#1a0e04'); px(9, 8, '#1a0e04'); px(4, 12, '#1a0e04');
+  // ---------- kırılabilir engel: sandık, varil, kömür, koli, tuğla ----------
+  function crate(stage = 0, w = 1) {
+    return memo(`crate${w}_${stage}`, () => mk(T, T, ({ rect, px, disc }) => {
+      const dk = (a) => a[stage];
+      if (w === 2) {          // varil
+        rect(2, 1, 12, 14, dk(['#4a2c12', '#3a2210', '#24140a']));
+        rect(3, 1, 10, 14, dk(['#9a5a26', '#7a461e', '#4a2a10'])); rect(4, 1, 2, 14, dk(['#c07a3a', '#9a5e2a', '#5e3a1a']));
+        for (const y of [3, 12]) rect(2, y, 12, 2, dk(['#6a6e76', '#50545c', '#33363c']));
+        rect(3, 1, 10, 1, '#d8a060');
+      } else if (w === 3) {   // cevherli kaya (kırılır)
+        disc(8, 8.5, 7.2, dk(['#4a3020', '#3a2618', '#24160c']));
+        disc(7.5, 7.8, 6, dk(['#a0744a', '#7e5a38', '#4e3622']));
+        disc(6, 6, 2.6, dk(['#c4986a', '#9a744e', '#5e4430']));
+        for (const [x, y] of [[9, 5], [10, 6], [5, 10], [6, 11], [11, 10]]) px(x, y, '#3a2416');
+        for (const [x, y] of [[4, 8], [9, 9], [11, 7], [7, 12]]) px(x, y, stage ? '#5a4030' : '#ffd84a');
+      } else if (w === 4) {   // koli
+        rect(1, 2, 14, 13, dk(['#7a5630', '#5e4024', '#3a2814']));
+        rect(2, 3, 12, 11, dk(['#b88a58', '#94683e', '#5e4226'])); rect(2, 3, 12, 1, '#d4aa78');
+        rect(7, 3, 2, 11, dk(['#d8c8a0', '#b0a080', '#7a6e58'])); rect(2, 8, 12, 1, dk(['#9a7448', '#7a5a38', '#4a3622']));
+        px(4, 11, '#5a3e20'); px(11, 5, '#5a3e20');
+      } else if (w === 5) {   // tuğla yığını
+        rect(0, 0, T, T, dk(['#c8b090', '#a08a70', '#605444']));
+        for (let y = 0; y < T; y += 4) for (let x = (y / 4) % 2 ? -4 : 0; x < T; x += 8) rect(x + 1, y + 1, 6, 2, dk(['#a8442e', '#863624', '#4e2016']));
+        rect(0, 0, T, 1, '#e0d0b0');
+      } else {                // tahta sandık
+        const wood = dk(['#b4722c', '#8a5420', '#5a3612']), dark = dk(['#6e4216', '#4e2e10', '#2e1a08']);
+        rect(0, 0, T, T, dark); rect(1, 1, 14, 14, wood); rect(1, 1, 14, 1, dk(['#d8964a', '#a86a2c', '#6a4420']));
+        rect(1, 5, 14, 1, dark); rect(1, 10, 14, 1, dark);
+        for (let k = 0; k < 12; k++) { px(2 + k, 13 - k, dark); px(3 + k, 13 - k, dark); }
+        for (const [x, y] of [[2, 2], [13, 2], [2, 13], [13, 13]]) px(x, y, '#e8d8b0');
       }
+      if (stage > 0) for (const [x, y] of [[6, 3], [7, 4], [10, 7], [9, 8], [4, 12], [11, 12]]) px(x, y, '#0e0804');
     }));
   }
 
@@ -254,6 +362,36 @@
         rect(5, 9, 2, 2, '#1c1622'); rect(9, 9, 2, 2, '#1c1622');
         rect(4, 8, 3, 1, '#5a5448'); rect(9, 8, 3, 1, '#5a5448');
         px(5, 9, '#fff'); px(9, 9, '#fff');
+      } else if (kind === 'yengec') { // yengeç: yan yan koşar
+        const c = frame ? 1 : 0;
+        for (const sx of [2, 13]) for (const y of [10, 12, 14]) px(sx + (sx === 2 ? c : -c), y, '#7a2a12');
+        disc(8, 10.5, 5.5, '#5a1e0c', 4.2); disc(8, 10, 4.8, '#d8542a', 3.6); disc(6.5, 9, 1.6, '#f08860');
+        rect(2, 4 + c, 3, 3, '#d8542a'); rect(11, 4 - c + 1, 3, 3, '#d8542a'); px(3, 4 + c, '#5a1e0c'); px(12, 5 - c, '#5a1e0c');
+        rect(6, 4, 1, 3, '#5a1e0c'); rect(9, 4, 1, 3, '#5a1e0c'); px(6, 3, '#fff'); px(9, 3, '#fff'); px(6, 4, '#111'); px(9, 4, '#111');
+      } else if (kind === 'marti') {  // martı: sandıkların üstünden uçar
+        const up = frame ? 1 : 0;
+        for (let k = 0; k < 6; k++) { px(1 + k, 7 - (up ? k >> 1 : 0) + (up ? 0 : k >> 2), '#e8ecf0'); px(14 - k, 7 - (up ? k >> 1 : 0) + (up ? 0 : k >> 2), '#e8ecf0'); }
+        px(1, up ? 7 : 8, '#5a6068'); px(14, up ? 7 : 8, '#5a6068'); px(2, up ? 7 : 8, '#5a6068'); px(13, up ? 7 : 8, '#5a6068');
+        disc(8, 8.5, 2.6, '#f4f6f8', 3.6); rect(7, 12, 2, 2, '#c8ccd0');
+        px(7, 6, '#1c1622'); px(9, 6, '#1c1622'); rect(7, 3, 2, 2, '#f0b030'); px(8, 2, '#f0b030');
+      } else if (kind === 'yarasa') { // yarasa: hızlı, kararsız
+        const up = frame ? 1 : 0;
+        const wing = up ? [[1, 4], [2, 5], [3, 5], [4, 6], [5, 6]] : [[1, 10], [2, 9], [3, 9], [4, 8], [5, 8]];
+        for (const [x, y] of wing) { rect(x, y, 1, 3, '#7a5aa8'); rect(15 - x, y, 1, 3, '#7a5aa8'); px(x, y, '#c8b0f0'); px(15 - x, y, '#c8b0f0'); }
+        disc(8, 8, 3.6, '#2a1a3a'); disc(8, 8, 3, '#9a7ac8'); px(7, 7, '#ff3020'); px(9, 7, '#ff3020'); px(6, 4, '#9a7ac8'); px(10, 4, '#9a7ac8');
+        px(7, 10, '#e8e0d0'); px(9, 10, '#e8e0d0');
+      } else if (kind === 'robot') {  // robot: inatla kovalar
+        const c = frame ? 1 : 0;
+        rect(3, 3, 10, 9, '#3a4048'); rect(4, 4, 8, 7, '#8a94a0'); rect(4, 4, 8, 1, '#b4bec8');
+        rect(5, 6, 6, 2, '#1c1622'); rect(6 + c * 2, 6, 2, 2, '#ff5a3a');
+        rect(7, 1, 2, 2, '#5a646e'); px(7 + c, 0, '#e0c040');
+        rect(3, 12, 10, 3, '#2a2e34'); for (let x = 3 + c; x < 13; x += 2) px(x, 13, '#6a7078');
+      } else if (kind === 'kivilcim') { // kıvılcım: çok hızlı
+        const r = frame ? 6 : 5;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]]) {
+          for (let k = 2; k <= (Math.abs(dx) === Math.abs(dy) ? r - 1 : r); k++) px(Math.round(8 + dx * k), Math.round(8 + dy * k), k > 3 ? '#f0a020' : '#ffe060');
+        }
+        disc(8, 8, 2.6, '#fff8d0'); px(7, 7, '#1c1622'); px(9, 7, '#1c1622');
       } else {                        // köstebek
         const c = frame ? 1 : 0;
         disc(8, 9.5, 6.5, '#3a2414', 6); disc(8, 9.5, 5.8, '#7a5030', 5.3);
@@ -267,5 +405,46 @@
   }
   const enemyFlash = (kind, frame) => memo(`enf${kind}${frame}`, () => silhouette(enemy(kind, frame)));
 
-  window.BUS = { T, PLAYER_COLORS, player, playerFlash, helmetIcon, floor, floorShadow, pillar, border, crate, bomb, flame, item, door, enemy, enemyFlash, mk };
+  // ---------- patronlar (32×32) ----------
+  function boss(kind, frame) {
+    return memo(`boss${kind}${frame}`, () => mk(32, 32, ({ rect, px, disc }) => {
+      const f = frame % 2;
+      const tread = (y) => { rect(2, y, 28, 6, '#22252a'); rect(3, y + 1, 26, 4, '#3a3e44'); for (let x = 4 + f * 2; x < 28; x += 4) rect(x, y + 1, 2, 4, '#55595f'); };
+      if (kind === 'kepce') {          // dev kepçe
+        tread(25);
+        rect(5, 12, 20, 13, '#c89a1a'); rect(5, 12, 20, 2, '#f0c848'); rect(23, 12, 2, 13, '#8a6a10');
+        rect(7, 5, 11, 9, '#c89a1a'); rect(8, 6, 9, 6, '#6ab0d0'); rect(8, 6, 3, 2, '#c0e8f8');
+        rect(10, 15, 10, 2, '#2a2830'); for (let x = 10; x < 20; x += 4) rect(x, 15, 2, 2, '#e0b020');
+        rect(24, 6 + f, 3, 12, '#a07a14'); rect(25, 4 + f, 6, 4, '#a07a14');
+        rect(25, 0 + f, 7, 6, '#6a6e74'); for (let x = 26; x < 32; x += 2) px(x, 6 + f, '#d8dce0');
+        px(9, 8, '#1c1622'); px(14, 8, '#1c1622'); rect(10, 10, 5, 1, '#1c1622');
+      } else if (kind === 'yengec') {  // dev yengeç
+        for (const sx of [4, 27]) for (const y of [18, 22, 26]) { rect(sx + (sx === 4 ? -f : f), y, 2, 2, '#7a2a12'); }
+        disc(16, 19, 12, '#5a1e0c', 9); disc(16, 18.5, 11, '#d8542a', 8.2); disc(11, 15, 4, '#f08860', 2.5);
+        for (const sx of [1, 23]) { rect(sx, 3 + (sx === 1 ? f : -f) + 2, 8, 7, '#d8542a'); rect(sx + 3, 3 + (sx === 1 ? f : -f) + 2, 2, 4, '#5a1e0c'); }
+        rect(11, 6, 2, 6, '#5a1e0c'); rect(19, 6, 2, 6, '#5a1e0c'); disc(12, 5.5, 2.2, '#fff'); disc(20, 5.5, 2.2, '#fff'); px(12, 6, '#111'); px(20, 6, '#111');
+        rect(12, 21, 8, 1, '#5a1e0c');
+      } else if (kind === 'matkap') {  // dev matkap
+        tread(25);
+        rect(4, 10, 18, 15, '#6a6e78'); rect(4, 10, 18, 2, '#9a9ea8'); rect(6, 13, 8, 6, '#2e3a46'); rect(7, 14, 3, 2, '#7ac0e0');
+        for (let k = 0; k < 10; k++) rect(22 + k, 12 + (k >> 1), 1, 11 - k, ((k + f * 2) >> 1) % 2 ? '#c8ccd2' : '#7a7e86');
+        rect(8, 4, 8, 7, '#d0a020'); rect(8, 4, 8, 1, '#f0c848'); px(10, 7, '#1c1622'); px(14, 7, '#1c1622');
+      } else if (kind === 'pres') {    // pres makinesi
+        rect(3, 2, 26, 6, '#4a5a64'); rect(3, 2, 26, 1, '#7a8a94');
+        rect(6, 8, 3, 8 + f * 3, '#9aa4ac'); rect(23, 8, 3, 8 + f * 3, '#9aa4ac');
+        rect(2, 14 + f * 3, 28, 14 - f * 3, '#5a6a74'); rect(2, 14 + f * 3, 28, 2, '#8a9aa4');
+        rect(8, 18 + f * 3, 16, 5, '#1c2228'); rect(10, 19 + f * 3, 4, 3, '#ff5030'); rect(18, 19 + f * 3, 4, 3, '#ff5030');
+        for (let x = 2; x < 30; x++) if (((x >> 1) & 1)) px(x, 29, '#e0b020'); else px(x, 29, '#1c1622');
+      } else {                         // yıkım robotu
+        rect(8, 22, 6, 8, '#3a3e44'); rect(18, 22, 6, 8, '#3a3e44'); rect(7, 29, 8, 3, '#22252a'); rect(17, 29, 8, 3, '#22252a');
+        rect(6, 10, 20, 13, '#8a2e22'); rect(6, 10, 20, 2, '#b8483a'); rect(13, 13, 6, 6, '#e0b020'); disc(16, 16, 2, '#1c1622');
+        rect(9, 1, 14, 9, '#6a727c'); rect(9, 1, 14, 1, '#9aa2ac'); rect(11, 4, 10, 3, '#1c1622'); rect(12 + f * 5, 4, 3, 3, '#ff4030');
+        rect(1, 11 + f, 5, 4, '#6a727c'); rect(26, 11 - f + 1, 5, 4, '#6a727c');
+        disc(3, 20 + f * 2, 3.5, '#2a2e34'); disc(29, 20 - f * 2 + 2, 3.5, '#2a2e34');
+      }
+    }));
+  }
+  const bossFlash = (kind, frame) => memo(`bossf${kind}${frame}`, () => silhouette(boss(kind, frame)));
+
+  window.BUS = { T, PLAYER_COLORS, player, playerFlash, helmetIcon, floor, floorShadow, pillar, extra, border, crate, bomb, flame, item, door, enemy, enemyFlash, boss, bossFlash, mk };
 })();

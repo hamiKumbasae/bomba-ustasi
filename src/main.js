@@ -17,37 +17,87 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* yok say */ } },
   };
-  let crt = store.get('bu-ekran', true);
+  // Ekran: 'vcd' (eskimiş VCD görüntüsü, varsayılan), 'crt' (tüplü TV), 'temiz'
+  const MODES = ['vcd', 'crt', 'temiz'];
+  let screenMode = store.get('bu-ekran-mod', 'vcd');
+  if (!MODES.includes(screenMode)) screenMode = 'vcd';
   let muted = store.get('bu-ses', false);
 
-  // ---------- retro ekran (WebGL) ----------
-  const FS = `
+  // ---------- retro ekran (WebGL, iki geçiş) ----------
+  // 1. geçiş 256×240'ta: VCD'nin MPEG-1 görüntüsü gibi renk (chroma) yarım
+  //    çözünürlükte ve sağa taşar, 8×8 bloklar titreşir, renkler bantlanır,
+  //    soluk ve sararmış tonlar, sinyal yansıması (hayalet).
+  // 2. geçiş ekran çözünürlüğünde: tüp eğriliği, yumuşak büyütme, tarama
+  //    çizgileri, satır kayması ve aşağı yürüyen parazit bandı, kumlanma.
+  const COMMON = `
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
 #else
 precision mediump float;
 #endif
+uniform vec2 uView, uOut;
+uniform float uMode, uTime;
+float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+`;
+  const FS1 = COMMON + `
 uniform sampler2D uSrc;
-uniform vec2 uOut, uView;
-uniform float uCrt, uTime;
+vec3 S(vec2 c) { return texture2D(uSrc, (clamp(c, vec2(0.0), uView - 1.0) + 0.5) / uView).rgb; }
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+vec2 chroma(vec3 c) { float y = luma(c); return vec2(c.b - y, c.r - y); }
+vec3 fromYC(float y, vec2 ch) { float r = ch.y + y, b = ch.x + y; return vec3(r, (y - 0.299 * r - 0.114 * b) / 0.587, b); }
+void main() {
+  vec2 c = floor(gl_FragCoord.xy);
+  vec3 c0 = S(c);
+  if (uMode < 0.5) { gl_FragColor = vec4(c0, 1.0); return; }
+  if (uMode < 1.5) {
+    vec3 col = mix(c0, S(c - vec2(1.0, 0.0)), 0.22);
+    col = mix(vec3(luma(col)), col, 0.8);
+    gl_FragColor = vec4(col * vec3(0.94, 0.9, 0.8) + vec3(0.05, 0.04, 0.03), 1.0);
+    return;
+  }
+  float y = luma(c0) * 0.6 + (luma(S(c - vec2(1.0, 0.0))) + luma(S(c + vec2(1.0, 0.0)))) * 0.2;
+  y += (luma(S(c - vec2(4.0, 0.0))) - 0.35) * 0.08;
+  vec2 cc = floor(c / 2.0) * 2.0, ch = vec2(0.0);
+  for (int i = -3; i <= 1; i++) {
+    ch += chroma(S(cc + vec2(float(i), 0.0)));
+    ch += chroma(S(cc + vec2(float(i), 1.0)));
+  }
+  ch /= 10.0;
+  vec2 blk = floor(c / 8.0);
+  float tq = floor(uTime * 7.0);
+  y += (h(blk + tq) - 0.5) * 0.04;
+  ch += (vec2(h(blk + tq + 3.1), h(blk + tq + 7.7)) - 0.5) * 0.035;
+  y = 0.075 + y * 0.82;
+  ch = ch * 0.6 + vec2(-0.03, 0.014);
+  y = floor(y * 34.0 + 0.5) / 34.0;
+  ch = floor(ch * 18.0 + 0.5) / 18.0;
+  gl_FragColor = vec4(clamp(fromYC(y, ch), 0.0, 1.0), 1.0);
+}`;
+  const FS2 = COMMON + `
+uniform sampler2D uImg;
 void main() {
   vec2 f = vec2(gl_FragCoord.x, uOut.y - gl_FragCoord.y) / uOut;
-  vec2 p = f * uView, cell = floor(p);
-  vec3 col = texture2D(uSrc, (cell + 0.5) / uView).rgb;
-  if (uCrt < 0.5) { gl_FragColor = vec4(col, 1.0); return; }
-  vec3 prev = texture2D(uSrc, (cell + vec2(-0.5, 0.5)) / uView).rgb;
-  col = mix(col, prev, 0.22);
-  float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 0.8);
-  col = col * vec3(0.94, 0.9, 0.8) + vec3(0.05, 0.04, 0.03);
+  if (uMode < 0.5) { gl_FragColor = vec4(texture2D(uImg, (floor(f * uView) + 0.5) / uView).rgb, 1.0); return; }
+  float vcd = step(1.5, uMode);
+  vec2 q = f - 0.5;
+  q *= 1.0 + dot(q, q) * (0.06 + 0.06 * vcd);
+  vec2 g = q + 0.5;
+  if (g.x < 0.0 || g.x > 1.0 || g.y < 0.0 || g.y > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  float row = floor(g.y * uView.y);
+  float band = fract(uTime * 0.07);
+  float near = 1.0 - smoothstep(0.0, 0.035, abs(g.y - band));
+  g.x += vcd * ((h(vec2(row, floor(uTime * 20.0))) - 0.5) * 0.002 + near * (h(vec2(row, uTime)) - 0.5) * 0.014);
+  vec2 p = g * uView;
+  vec3 col = vcd > 0.5 ? texture2D(uImg, g).rgb : texture2D(uImg, (floor(p) + 0.5) / uView).rgb;
   float rowPx = uOut.y / uView.y;
-  float k = 0.34 * clamp((rowPx - 1.6) / 2.0, 0.0, 1.0);
-  col *= 1.0 - k * (1.0 - sin(3.14159 * fract(p.y)));
+  float k = (0.3 + 0.12 * vcd) * clamp((rowPx - 1.6) / 2.0, 0.0, 1.0);
+  float fl = vcd * step(0.5, fract(uTime * 30.0)) * 0.08;
+  col *= 1.0 - k * (1.0 - sin(3.14159 * fract(p.y + fl)));
   col *= 1.0 + k * 0.3;
-  vec2 v = (f - 0.5) * vec2(1.0, 1.1);
-  col *= 1.0 - dot(v, v) * 0.55;
-  float n = fract(sin(dot(floor(gl_FragCoord.xy * 0.5) + uTime, vec2(12.9898, 78.233))) * 43758.5453);
-  col += (n - 0.5) * 0.03;
+  col += near * vcd * 0.07;
+  vec2 v = q * vec2(1.0, 1.1);
+  col *= 1.0 - dot(v, v) * (0.55 + 0.4 * vcd);
+  col += (h(floor(gl_FragCoord.xy * 0.5) + fract(uTime) * 91.0) - 0.5) * (0.03 + 0.05 * vcd);
   gl_FragColor = vec4(col, 1.0);
 }`;
   let gl = null, glp = null, direct = null;
@@ -55,20 +105,33 @@ void main() {
     const g = canvas.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false });
     if (!g) return null;
     const sh = (type, src) => { const s = g.createShader(type); g.shaderSource(s, src); g.compileShader(s); if (!g.getShaderParameter(s, g.COMPILE_STATUS)) throw new Error(g.getShaderInfoLog(s)); return s; };
-    const prog = g.createProgram();
-    g.attachShader(prog, sh(g.VERTEX_SHADER, 'attribute vec2 a; void main() { gl_Position = vec4(a, 0.0, 1.0); }'));
-    g.attachShader(prog, sh(g.FRAGMENT_SHADER, FS));
-    g.linkProgram(prog);
-    if (!g.getProgramParameter(prog, g.LINK_STATUS)) throw new Error(g.getProgramInfoLog(prog));
-    g.useProgram(prog);
+    const program = (fs) => {
+      const pr = g.createProgram();
+      g.attachShader(pr, sh(g.VERTEX_SHADER, 'attribute vec2 a; void main() { gl_Position = vec4(a, 0.0, 1.0); }'));
+      g.attachShader(pr, sh(g.FRAGMENT_SHADER, fs));
+      g.bindAttribLocation(pr, 0, 'a');
+      g.linkProgram(pr);
+      if (!g.getProgramParameter(pr, g.LINK_STATUS)) throw new Error(g.getProgramInfoLog(pr));
+      const u = (n) => g.getUniformLocation(pr, n);
+      return { pr, uView: u('uView'), uOut: u('uOut'), uMode: u('uMode'), uTime: u('uTime'), uTex: u('uSrc') || u('uImg') };
+    };
+    const p1 = program(FS1), p2 = program(FS2);
     g.bindBuffer(g.ARRAY_BUFFER, g.createBuffer());
     g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), g.STATIC_DRAW);
-    const a = g.getAttribLocation(prog, 'a'); g.enableVertexAttribArray(a); g.vertexAttribPointer(a, 2, g.FLOAT, false, 0, 0);
-    const t = g.createTexture(); g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, t);
-    for (const [k, v] of [[g.TEXTURE_MIN_FILTER, g.NEAREST], [g.TEXTURE_MAG_FILTER, g.NEAREST], [g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE], [g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE]]) g.texParameteri(g.TEXTURE_2D, k, v);
-    const u = (n) => g.getUniformLocation(prog, n);
-    g.uniform1i(u('uSrc'), 0); g.uniform2f(u('uView'), SW, SH);
-    glp = { uOut: u('uOut'), uCrt: u('uCrt'), uTime: u('uTime') };
+    g.enableVertexAttribArray(0); g.vertexAttribPointer(0, 2, g.FLOAT, false, 0, 0);
+    const tex = (filter, w, h) => {
+      const t = g.createTexture(); g.bindTexture(g.TEXTURE_2D, t);
+      for (const [k, v] of [[g.TEXTURE_MIN_FILTER, filter], [g.TEXTURE_MAG_FILTER, filter], [g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE], [g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE]]) g.texParameteri(g.TEXTURE_2D, k, v);
+      if (w) g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, w, h, 0, g.RGBA, g.UNSIGNED_BYTE, null);
+      return t;
+    };
+    const src = tex(g.NEAREST), mid = tex(g.LINEAR, SW, SH);
+    const fb = g.createFramebuffer();
+    g.bindFramebuffer(g.FRAMEBUFFER, fb);
+    g.framebufferTexture2D(g.FRAMEBUFFER, g.COLOR_ATTACHMENT0, g.TEXTURE_2D, mid, 0);
+    if (g.checkFramebufferStatus(g.FRAMEBUFFER) !== g.FRAMEBUFFER_COMPLETE) throw new Error('framebuffer');
+    g.bindFramebuffer(g.FRAMEBUFFER, null);
+    glp = { p1, p2, src, mid, fb };
     return g;
   }
   try { gl = initGL(); } catch (e) {
@@ -93,11 +156,24 @@ void main() {
 
   function present(t) {
     if (gl) {
+      const m = MODES.length - 1 - MODES.indexOf(screenMode); // vcd 2, crt 1, temiz 0
+      const time = (t / 1000) % 97;
+      const set = (P, w, h) => {
+        gl.useProgram(P.pr);
+        gl.uniform2f(P.uView, SW, SH); gl.uniform2f(P.uOut, w, h);
+        gl.uniform1f(P.uMode, m); gl.uniform1f(P.uTime, time); gl.uniform1i(P.uTex, 0);
+      };
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, glp.src);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, lo);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glp.fb);
+      gl.viewport(0, 0, SW, SH);
+      set(glp.p1, SW, SH);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindTexture(gl.TEXTURE_2D, glp.mid);
       gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform2f(glp.uOut, canvas.width, canvas.height);
-      gl.uniform1f(glp.uCrt, crt ? 1 : 0);
-      gl.uniform1f(glp.uTime, (t / 1000) % 97);
+      set(glp.p2, canvas.width, canvas.height);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else if (direct) {
       direct.imageSmoothingEnabled = false;
@@ -172,22 +248,30 @@ void main() {
     shrink: () => { const n = performance.now(); if (n - lastShrink < 120) return; lastShrink = n; tone(70, 0.12, 'triangle', 0.1, 0.6); },
     helmet: () => { tone(1200, 0.08, 'square', 0.05, 0.5); noise(0.12, 0.12, 3000); },
     move: () => tone(660, 0.04, 'square', 0.04),
+    bossHit: () => { tone(160, 0.25, 'sawtooth', 0.09, 0.5); noise(0.2, 0.18, 2400); },
+    bossDown: () => { noise(1.4, 0.4, 900); [196, 165, 131, 98].forEach((f, i) => tone(f, 0.3, 'sawtooth', 0.08, 0.7, i * 0.25)); },
+    charge: () => tone(110, 0.5, 'sawtooth', 0.07, 2.5),
+    slam: () => { tone(70, 0.9, 'square', 0.06, 0.8); tone(140, 0.12, 'square', 0.05, 1, 0.3); tone(140, 0.12, 'square', 0.05, 1, 0.6); },
+    spawn: () => tone(300, 0.15, 'triangle', 0.06, 1.8),
     select: () => { tone(523, 0.06, 'square', 0.05); tone(784, 0.08, 'square', 0.05, 0, 0.06); },
   };
 
   // ---------- durum ----------
+  const TOTAL = (window.BU_LEVELS || []).length || 50;
+  const stageLabel = (n) => Math.ceil(n / 10) + '-' + (((n - 1) % 10) + 1);
+  const worldName = (w) => ((window.BU_WORLDS || [])[w - 1] || { name: '' }).name;
   const MENU_TITLE = () => {
     const items = [{ id: 'story', label: 'TEK OYUNCU' }];
-    const max = store.get('bu-kayit', 1);
-    if (max > 1) items.push({ id: 'continue', label: 'DEVAM: BÖLÜM ' + max });
+    const max = Math.min(TOTAL, store.get('bu-kayit', 1));
+    if (max > 1) items.push({ id: 'continue', label: 'DEVAM: BÖLÜM ' + stageLabel(max) });
     items.push({ id: 'battle', label: 'KAPIŞMA' }, { id: 'help', label: 'NASIL OYNANIR' });
     return items;
   };
   const SLOT_TYPES = ['key1', 'key2', 'cpu', 'off'];
   const SLOT_LABEL = { key1: 'OKLAR', key2: 'WASD', cpu: 'BİLGİSAYAR', off: 'YOK', phone: 'TELEFON' };
   const app = {
-    screen: 'title', menuIndex: 0, pauseIndex: 0, lobbyIndex: 0,
-    slots: [{ type: 'key1' }, { type: 'cpu' }, { type: 'cpu' }, { type: 'off' }],
+    screen: params.has('hemen') ? 'title' : 'boot', bootT: 0, menuIndex: 0, pauseIndex: 0, lobbyIndex: 0,
+    slots: [{ type: 'key1' }, { type: 'cpu' }, { type: 'cpu' }, { type: 'off' }], map: 0,
     G: null, fx: [], shake: 0, seed: 1, deco: null,
   };
   window.__bu = { app, BU };
@@ -207,15 +291,17 @@ void main() {
     clearInputs();
   }
   function battleSlots() { return app.slots.map((s) => (s.type === 'off' ? null : { cpu: s.type === 'cpu' })); }
+  // 0 karışık, 1..5 dünyalar
+  const battleWorld = (round) => (app.map ? app.map : 1 + ((app.seed + round * 7) % 5));
   function startBattle() {
     app.seed = (Date.now() % 100000) + 1;
     const G = BU.create();
-    BU.setupBattle(G, battleSlots(), 1, app.seed);
+    BU.setupBattle(G, battleSlots(), 1, app.seed, battleWorld(1));
     app.G = G; app.screen = 'battle'; app.fx = [];
     clearInputs();
   }
   function toTitle() { app.screen = 'title'; app.G = null; app.menuIndex = 0; clearInputs(); }
-  function toLobby() { app.screen = 'lobby'; app.G = null; app.lobbyIndex = 4; assignPhones(); clearInputs(); }
+  function toLobby() { app.screen = 'lobby'; app.G = null; app.lobbyIndex = 5; assignPhones(); clearInputs(); }
 
   // ---------- giriş ----------
   const held = { key1: [], key2: [], touch: [] };
@@ -231,15 +317,16 @@ void main() {
   const BOMB_KEYS = { ' ': 'key1', Enter: 'key1', f: 'key2' };
 
   function inGame() { return app.screen === 'story' || app.screen === 'battle'; }
-  function playing() { return inGame() && app.G && !app.G.paused && app.G.phase !== 'over' && app.G.phase !== 'matchEnd'; }
+  function playing() { return inGame() && app.G && !app.G.paused && !['over', 'matchEnd', 'end'].includes(app.G.phase); }
 
   window.addEventListener('keydown', (e) => {
     if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     audio();
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (KEY_DIR[k] || BOMB_KEYS[k]) e.preventDefault();
+    if (app.screen === 'boot') { e.preventDefault(); toTitle(); return; }
     if (k === 'm') { muted = !muted; store.set('bu-ses', muted); showButtons(); return; }
-    if (k === 'c') { crt = !crt; store.set('bu-ekran', crt); showButtons(); return; }
+    if (k === 'c') { cycleScreen(); return; }
     if (playing()) {
       if (KEY_DIR[k]) { const [set, d] = KEY_DIR[k]; held[set] = held[set].filter((x) => x !== d); held[set].push(d); return; }
       if (BOMB_KEYS[k] && !e.repeat) { bombQueue.add(BOMB_KEYS[k]); return; }
@@ -262,7 +349,7 @@ void main() {
 
   function togglePause(force) {
     const G = app.G;
-    if (!G || !inGame() || G.phase === 'over' || G.phase === 'matchEnd') return;
+    if (!G || !inGame() || ['over', 'matchEnd', 'end'].includes(G.phase)) return;
     G.paused = force === true ? true : !G.paused;
     app.pauseIndex = 0;
     clearInputs();
@@ -273,14 +360,16 @@ void main() {
       const n = MENU_TITLE().length;
       if (d === 'up' || d === 'down') { app.menuIndex = (app.menuIndex + (d === 'up' ? n - 1 : 1)) % n; sfx.move(); }
     } else if (app.screen === 'lobby') {
-      if (d === 'up' || d === 'down') { app.lobbyIndex = (app.lobbyIndex + (d === 'up' ? 4 : 1)) % 5; sfx.move(); }
+      if (d === 'up' || d === 'down') { app.lobbyIndex = (app.lobbyIndex + (d === 'up' ? 5 : 1)) % 6; sfx.move(); }
       else if (app.lobbyIndex < 4) { cycleSlot(app.lobbyIndex, d === 'right' ? 1 : -1); sfx.move(); }
+      else if (app.lobbyIndex === 4) { app.map = (app.map + (d === 'right' ? 1 : 5)) % 6; sfx.move(); }
     } else if (inGame() && app.G && app.G.paused) {
       if (d === 'up' || d === 'down') { app.pauseIndex = 1 - app.pauseIndex; sfx.move(); }
     }
   }
   function confirm() {
     audio();
+    if (app.screen === 'boot') { toTitle(); return; }
     if (app.screen === 'title') {
       const it = MENU_TITLE()[app.menuIndex];
       sfx.select();
@@ -291,11 +380,12 @@ void main() {
     } else if (app.screen === 'help') { sfx.select(); app.screen = 'title'; }
     else if (app.screen === 'lobby') {
       if (app.lobbyIndex < 4) { cycleSlot(app.lobbyIndex, 1); sfx.move(); return; }
+      if (app.lobbyIndex === 4) { app.map = (app.map + 1) % 6; sfx.move(); return; }
       if (app.slots.filter((s) => s.type !== 'off').length >= 2) { sfx.select(); startBattle(); }
     } else if (inGame() && app.G) {
       const G = app.G;
       if (G.paused) { if (app.pauseIndex === 0) togglePause(); else toTitle(); sfx.select(); }
-      else if (G.phase === 'over') toTitle();
+      else if (G.phase === 'over' || G.phase === 'end') toTitle();
       else if (G.phase === 'matchEnd') toLobby();
     }
   }
@@ -364,10 +454,16 @@ void main() {
         case 'helmet': sfx.helmet(); buzzSlot(e.id, 60); break;
         case 'enemy': sfx.enemy(); app.fx.push({ x: e.x, y: e.y, text: String(e.points), t: 1 }); break;
         case 'doorOpen': sfx.door(); break;
-        case 'clear': sfx.clear(); store.set('bu-kayit', Math.max(store.get('bu-kayit', 1), e.stage + 1)); break;
+        case 'clear': (e.boss ? sfx.win : sfx.clear)(); store.set('bu-kayit', Math.min(TOTAL, Math.max(store.get('bu-kayit', 1), e.stage + 1))); break;
+        case 'end': sfx.win(); break;
+        case 'bossHit': sfx.bossHit(); app.shake = 0.3; break;
+        case 'bossDown': sfx.bossDown(); app.shake = 1.2; break;
+        case 'bossCharge': sfx.charge(); break;
+        case 'slam': sfx.slam(); break;
+        case 'spawn': sfx.spawn(); break;
         case 'over': sfx.over(); break;
         case 'roundEnd': sfx.round(); break;
-        case 'nextRound': BU.setupBattle(G, battleSlots(), G.round + 1, app.seed); app.fx = []; break;
+        case 'nextRound': BU.setupBattle(G, battleSlots(), G.round + 1, app.seed, battleWorld(G.round + 1)); app.fx = []; break;
         case 'matchEnd': sfx.win(); break;
         case 'shrink': sfx.shrink(); break;
       }
@@ -441,15 +537,19 @@ void main() {
   // ---------- çizim: oyun ----------
   const sx = (x) => AX + x * TS, sy = (y) => AY + y * TS;
   function drawArena(G, t) {
+    const w = G.world || 1;
     ctx.fillStyle = '#100e1c'; ctx.fillRect(0, AY - 2, SW, SH - AY + 2);
     for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
       const i = idx(x, y), v = G.grid[i], X = sx(x), Y = sy(y);
       if (v === WALL) {
         const edge = x === 0 || y === 0 || x === COLS - 1 || y === ROWS - 1;
-        ctx.drawImage(edge ? S.border() : S.pillar(), X, Y);
+        const kind = G.wallKind ? G.wallKind[i] : 1;
+        const img = edge ? S.border(w, w === 2 ? x + y + Math.floor(t * 2) : x * 3 + y) : kind === 1 ? S.pillar(w) : S.extra(w, x + y * 2);
+        ctx.drawImage(img, X, Y);
         continue;
       }
-      ctx.drawImage(S.floor((x + y) & 1), X, Y);
+      ctx.drawImage(S.floor((x + y) & 1, w), X, Y);
+      if (G.warnT && G.warnT[i] > 0 && Math.floor(t * 12) % 2) { ctx.fillStyle = 'rgba(255,60,30,.5)'; ctx.fillRect(X + 1, Y + 1, 14, 14); }
       if (y > 0 && G.grid[idx(x, y - 1)] !== FLOOR) ctx.drawImage(S.floorShadow(), X, Y);
       if (i === G.door && v === FLOOR) ctx.drawImage(S.door(G.doorOpen, Math.floor(t * 4) % 2), X, Y);
       if (v === FLOOR && G.revealed[i] && G.itemAt[i] >= 0) ctx.drawImage(S.item(ITEMS[G.itemAt[i]], Math.floor(t * 5) % 2), X, Y);
@@ -457,7 +557,7 @@ void main() {
     for (let i = 0; i < BU.N; i++) {
       if (G.grid[i] !== CRATE) continue;
       const c = G.crumble[i], stage = c > 0 ? (c > RULES.crumbleTime / 2 ? 1 : 2) : 0;
-      ctx.drawImage(S.crate(stage), sx(i % COLS), sy(Math.floor(i / COLS)));
+      ctx.drawImage(S.crate(stage, w), sx(i % COLS), sy(Math.floor(i / COLS)));
     }
     for (const b of G.bombs) {
       const f = b.t < 0.6 ? Math.floor(b.age * 16) % 3 : Math.floor(b.age * 6) % 3;
@@ -474,6 +574,16 @@ void main() {
       const img = !e.alive ? (Math.floor(e.dying * 12) % 2 ? S.enemyFlash(e.kind, fr) : S.enemy(e.kind, fr)) : S.enemy(e.kind, fr);
       if (!e.alive && e.dying < 0.35 && Math.floor(e.dying * 20) % 2) continue;
       ctx.drawImage(img, Math.round(sx(e.x)), Math.round(sy(e.y)));
+    }
+    const B = G.boss;
+    if (B && !B.gone) {
+      const fr = Math.floor(B.anim * (B.charging > 0 ? 12 : 5)) % 2;
+      const X = Math.round(sx(B.x) - 8), Y = Math.round(sy(B.y) - 8);
+      const flash = (B.inv > 0 && Math.floor(B.inv * 14) % 2) || (!B.alive && Math.floor(B.dying * 10) % 2);
+      if (B.alive || B.dying > 0.25 || Math.floor(B.dying * 20) % 2) {
+        const j = B.alive ? 0 : Math.round((Math.random() - 0.5) * 3);
+        ctx.drawImage(flash ? S.bossFlash(B.kind, fr) : S.boss(B.kind, fr), X + j, Y);
+      }
     }
     const ps = G.players.slice().sort((a, b) => a.y - b.y);
     for (const p of ps) {
@@ -497,7 +607,7 @@ void main() {
     ctx.fillStyle = '#18142c'; ctx.fillRect(0, 0, SW, AY - 4);
     ctx.fillStyle = '#3c3468'; ctx.fillRect(0, AY - 5, SW, 1);
     if (G.mode === 'story') {
-      text('BÖLÜM ' + G.stage, 8, 9, '#f0e8d0');
+      text('BÖLÜM ' + stageLabel(G.stage), 8, 9, '#f0e8d0');
       ctx.drawImage(S.helmetIcon(0), 104, 9);
       text('x' + Math.max(0, G.lives), 116, 9, '#f0e8d0');
       text(String(G.score).padStart(6, '0'), 248, 9, '#f2c230', 8, 'right');
@@ -505,6 +615,14 @@ void main() {
       // ödül sayaçları
       ctx.drawImage(S.item('bomb', 0), 138, 5); text(String(p.bombs), 156, 9, '#f0e8d0');
       ctx.drawImage(S.item('fire', 0), 166, 5); text(String(p.fire), 184, 9, '#f0e8d0');
+      const B = G.boss;
+      if (B && B.alive) {
+        const max = B.maxHp, w = Math.floor(232 / max);
+        for (let k = 0; k < max; k++) {
+          ctx.fillStyle = k < B.hp ? (B.inv > 0 && Math.floor(t * 16) % 2 ? '#fff6c0' : '#d8402a') : '#3c3468';
+          ctx.fillRect(12 + k * w, 20, w - 2, 3);
+        }
+      }
     } else {
       const x0 = [6, 64, 160, 218];
       G.players.forEach((p) => {
@@ -541,9 +659,16 @@ void main() {
     hud(G, t);
     const name = (id) => 'OYUNCU ' + (id + 1);
     if (G.phase === 'intro') {
-      if (G.mode === 'story') banner([['BÖLÜM ' + G.stage, '#f2c230', 16], ['HAZIR OL!', '#f0e8d0']]);
-      else banner([['TUR ' + G.round, '#f2c230', 16], ['HAZIR OL!', '#f0e8d0']]);
-    } else if (G.phase === 'clear') banner([['BÖLÜM TAMAM!', '#6ad86a', 8], ['+1000', '#f2c230']]);
+      if (G.mode === 'story') {
+        const first = (G.stage - 1) % 10 === 0;
+        if (G.boss) banner([['PATRON', '#ff6a58', 16], [upper(G.stageName), '#f2c230'], ['BÖLÜM ' + stageLabel(G.stage), '#c8c0a8']], 92);
+        else banner((first ? [[G.world + '. DÜNYA', '#c8c0a8'], [upper(worldName(G.world)), '#f2c230', 16]] : [['BÖLÜM ' + stageLabel(G.stage), '#f2c230', 16]])
+          .concat([[upper(G.stageName || ''), '#f0e8d0']]), first ? 88 : 98);
+      } else banner([['TUR ' + G.round, '#f2c230', 16], [upper(worldName(G.world)), '#c8c0a8'], ['HAZIR OL!', '#f0e8d0']]);
+    } else if (G.phase === 'clear') {
+      if (G.boss) banner([['PATRON YENİLDİ!', '#6ad86a'], ['+1 CAN', '#f2c230']]);
+      else banner([['BÖLÜM TAMAM!', '#6ad86a', 8], ['+1000', '#f2c230']]);
+    } else if (G.phase === 'end') banner([['TEBRİKLER!', '#f2c230', 16], ['50 BÖLÜMÜN', '#f0e8d0'], ['HEPSİ BİTTİ', '#f0e8d0'], ['SKOR ' + G.score, '#6ad86a'], ['ENTER: MENÜ', '#c8c0a8']], 70);
     else if (G.phase === 'over') banner([['OYUN BİTTİ', '#ff6a58', 16], ['SKOR ' + G.score, '#f2c230'], ['ENTER: MENÜ', '#c8c0a8']]);
     else if (G.phase === 'roundEnd') banner([[G.winner >= 0 ? name(G.winner) + ' KAZANDI' : 'BERABERE', G.winner >= 0 ? S.PLAYER_COLORS[G.winner].ui : '#f0e8d0']]);
     else if (G.phase === 'matchEnd') banner([['ŞAMPİYON', '#f2c230', 16], [name(G.champion), S.PLAYER_COLORS[G.champion].ui], ['ENTER: DEVAM', '#c8c0a8']]);
@@ -585,14 +710,15 @@ void main() {
     const it = [['bomb', '+1 DİNAMİT'], ['fire', '+1 MENZİL'], ['speed', 'DAHA HIZLI'], ['helmet', 'KASK: 1 KEZ KORUR']];
     it.forEach(([k, s], i) => { ctx.drawImage(S.item(k, 0), 16, 120 + i * 18); text(s, 38, 124 + i * 18, '#f0e8d0'); });
     text('KAPIŞMA: 2. OYUNCU WASD+F', 16, 196, '#c8c0a8');
-    text('ENTER: GERİ', SW / 2, 222, '#a8a090', 8, 'center');
+    text('HER DÜNYANIN SONUNDA PATRON', 16, 208, '#ff8a70');
+    text('ENTER: GERİ', SW / 2, 224, '#a8a090', 8, 'center');
   }
   function drawLobby(t) {
     drawBackdrop(t);
     text('KAPIŞMA', SW / 2, 10, '#f2c230', 16, 'center');
     text('3 TUR ALAN KAZANIR', SW / 2, 32, '#c8c0a8', 8, 'center');
     app.slots.forEach((s, i) => {
-      const y = 54 + i * 26, on = app.lobbyIndex === i;
+      const y = 50 + i * 24, on = app.lobbyIndex === i;
       ctx.fillStyle = on ? 'rgba(242,194,48,.18)' : 'rgba(20,16,36,.7)'; ctx.fillRect(16, y - 4, SW - 32, 22);
       ctx.globalAlpha = s.type === 'off' ? 0.35 : 1;
       ctx.drawImage(S.player(i, 'down', 0), 22, y - 2);
@@ -601,19 +727,41 @@ void main() {
       const lab = SLOT_LABEL[s.type];
       text((on && s.type !== 'phone' ? '< ' : '') + lab + (on && s.type !== 'phone' ? ' >' : ''), SW - 22, y + 3, s.type === 'off' ? '#6a6480' : '#f0e8d0', 8, 'right');
     });
+    const onMap = app.lobbyIndex === 4;
+    ctx.fillStyle = onMap ? 'rgba(242,194,48,.18)' : 'rgba(20,16,36,.7)'; ctx.fillRect(16, 146, SW - 32, 18);
+    text('HARİTA', 24, 151, '#c8c0a8');
+    text((onMap ? '< ' : '') + (app.map ? upper(worldName(app.map)) : 'KARIŞIK') + (onMap ? ' >' : ''), SW - 22, 151, '#f0e8d0', 8, 'right');
     const ok = app.slots.filter((s) => s.type !== 'off').length >= 2;
-    const on = app.lobbyIndex === 4;
-    text((on ? '> ' : '') + 'BAŞLA' + (on ? ' <' : ''), SW / 2, 166, ok ? (on ? '#f2c230' : '#f0e8d0') : '#6a6480', 8, 'center');
-    text('K: TELEFONLA KATIL', SW / 2, 192, '#a8a090', 8, 'center');
-    text('2. KLAVYE: WASD + F', SW / 2, 206, '#a8a090', 8, 'center');
+    const on = app.lobbyIndex === 5;
+    text((on ? '> ' : '') + 'BAŞLA' + (on ? ' <' : ''), SW / 2, 174, ok ? (on ? '#f2c230' : '#f0e8d0') : '#6a6480', 8, 'center');
+    text('K: TELEFONLA KATIL', SW / 2, 194, '#a8a090', 8, 'center');
+    text('2. KLAVYE: WASD + F', SW / 2, 207, '#a8a090', 8, 'center');
     text('ESC: GERİ', SW / 2, 222, '#6a6480', 8, 'center');
+  }
+
+  // Açılış: eski VCD oynatıcılarının mavi ekranı.
+  function drawBoot(s) {
+    const k = app.bootT;
+    ctx.fillStyle = '#1a34a4'; ctx.fillRect(0, 0, SW, SH);
+    ctx.fillStyle = '#2a48c0'; for (let y = 0; y < SH; y += 4) ctx.fillRect(0, y, SW, 1);
+    // ▶ OYNAT
+    ctx.fillStyle = '#f0f0f0';
+    for (let i = 0; i < 7; i++) ctx.fillRect(14 + i, 14 + i / 2, 1, 8 - i);
+    text('OYNAT', 26, 14, '#f0f0f0', 8, 'left', '#0a1450');
+    text('VCD', SW - 14, 14, '#f0f0f0', 8, 'right', '#0a1450');
+    if (k > 0.4) text('VİDEO CD', SW / 2, 86, '#f0f0f0', 16, 'center', '#0a1450');
+    if (k > 1.0) text('BOMBA USTASI', SW / 2, 120, '#f2e070', 8, 'center', '#0a1450');
+    if (k > 1.0) text('DİSK 1', SW / 2, 136, '#c8d0f0', 8, 'center', '#0a1450');
+    const sec = Math.floor(k);
+    text('PARÇA 01   00:0' + Math.min(9, sec), 14, SH - 22, '#f0f0f0', 8, 'left', '#0a1450');
   }
 
   function render(t) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#100e1c'; ctx.fillRect(0, 0, SW, SH);
     const s = t / 1000;
-    if (app.screen === 'title') drawTitle(s);
+    if (app.screen === 'boot') drawBoot(s);
+    else if (app.screen === 'title') drawTitle(s);
     else if (app.screen === 'help') drawHelp(s);
     else if (app.screen === 'lobby') drawLobby(s);
     else if (app.G) drawGame(s);
@@ -630,6 +778,7 @@ void main() {
       if (inGame() && app.G) { applyInputs(); BU.update(app.G, STEP); onEvents(); }
     }
     app.fx = app.fx.filter((f) => (f.t -= dt) > 0);
+    if (app.screen === 'boot') { app.bootT += dt; if (app.bootT > 2.6) toTitle(); }
     if (app.shake > 0) app.shake -= dt;
     render(t);
     present(t);
@@ -639,11 +788,15 @@ void main() {
 
   // ---------- sayfa düğmeleri ve dokunmatik kumanda ----------
   const $ = (id) => document.getElementById(id);
+  function cycleScreen() {
+    screenMode = MODES[(MODES.indexOf(screenMode) + 1) % MODES.length];
+    store.set('bu-ekran-mod', screenMode); showButtons();
+  }
   function showButtons() {
-    if ($('ekran')) $('ekran').textContent = 'Ekran: ' + (crt ? 'Tüplü TV' : 'Temiz') + (gl ? '' : ' (yok)');
+    if ($('ekran')) $('ekran').textContent = 'Ekran: ' + (gl ? { vcd: 'VCD', crt: 'Tüplü TV', temiz: 'Temiz' }[screenMode] : 'Temiz');
     if ($('ses')) $('ses').textContent = 'Ses: ' + (muted ? 'Kapalı' : 'Açık');
   }
-  if ($('ekran')) $('ekran').onclick = () => { crt = !crt; store.set('bu-ekran', crt); showButtons(); };
+  if ($('ekran')) $('ekran').onclick = () => cycleScreen();
   if ($('ses')) $('ses').onclick = () => { audio(); muted = !muted; store.set('bu-ses', muted); showButtons(); };
   showButtons();
 
@@ -672,5 +825,5 @@ void main() {
 
   // Testler ve geliştirme için.
   window.__bu.startStory = startStory; window.__bu.startBattle = startBattle; window.__bu.toLobby = toLobby; window.__bu.toTitle = toTitle;
-  window.__bu.view = () => ({ webgl: !!gl, crt, w: canvas.width, h: canvas.height });
+  window.__bu.view = () => ({ webgl: !!gl, mode: screenMode, w: canvas.width, h: canvas.height });
 })();

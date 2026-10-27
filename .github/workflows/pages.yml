@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '22'
       - name: Çekirdek testleri
-        run: node tests/core.test.js
+        run: node tests/core.test.js && node tests/levels.test.js
       - name: Siteyi hazırla
         run: |
           mkdir _site
